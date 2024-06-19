@@ -41,17 +41,22 @@ func NewGCore(m map[string]string, metadata json.RawMessage) (providers.DNSServi
 }
 
 var features = providers.DocumentationNotes{
-	providers.CanAutoDNSSEC:          providers.Cannot(),
+	// The default for unlisted capabilities is 'Cannot'.
+	// See providers/capabilities.go for the entire list of capabilities.
+	providers.CanAutoDNSSEC:          providers.Can(),
 	providers.CanGetZones:            providers.Can(),
+	providers.CanConcur:              providers.Cannot(),
 	providers.CanUseAlias:            providers.Can(),
 	providers.CanUseCAA:              providers.Can(),
 	providers.CanUseDS:               providers.Cannot(),
 	providers.CanUseLOC:              providers.Cannot(),
 	providers.CanUseNAPTR:            providers.Cannot(),
-	providers.CanUsePTR:              providers.Cannot(),
+	providers.CanUsePTR:              providers.Can("G-Core supports PTR records only in rDNS zones"),
 	providers.CanUseSRV:              providers.Can("G-Core doesn't support SRV records with empty targets"),
 	providers.CanUseSSHFP:            providers.Cannot(),
 	providers.CanUseTLSA:             providers.Cannot(),
+	providers.CanUseHTTPS:            providers.Can(),
+	providers.CanUseSVCB:             providers.Can(),
 	providers.DocCreateDomains:       providers.Can(),
 	providers.DocDualHost:            providers.Can(),
 	providers.DocOfficiallySupported: providers.Cannot(),
@@ -184,6 +189,31 @@ func (c *gcoreProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, exist
 		default:
 			panic(fmt.Sprintf("unhandled change.Type %s", change.Type))
 		}
+	}
+
+	dnssecEnabled, err := c.dnssdkGetDNSSEC(dc.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	if !dnssecEnabled && dc.AutoDNSSEC == "on" {
+		// Copy all params to avoid overwrites
+		zone := dc.Name
+		corrections = append(corrections, &models.Correction{
+			Msg: "Enable DNSSEC",
+			F: func() error {
+				return c.dnssdkSetDNSSEC(zone, true)
+			},
+		})
+	} else if dnssecEnabled && dc.AutoDNSSEC == "off" {
+		// Copy all params to avoid overwrites
+		zone := dc.Name
+		corrections = append(corrections, &models.Correction{
+			Msg: "Disable DNSSEC",
+			F: func() error {
+				return c.dnssdkSetDNSSEC(zone, false)
+			},
+		})
 	}
 
 	result := append(reports, deletions...)

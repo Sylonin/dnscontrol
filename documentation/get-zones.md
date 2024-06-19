@@ -1,4 +1,4 @@
-# get-zones (was "convertzone")
+# get-zones
 
 DNSControl has a stand-alone utility that will contact a provider,
 download the records of one or more zones, and output them to a file
@@ -192,4 +192,4 @@ provider.)
 Implementing the `ListZones` function also activates the `check-creds`
 subcommand for that provider. Please add to the provider documentation
 a list of error messages that people might see if the credentials are
-invalid.  See `documentation/providers/gcloud.md` for examples.
+invalid.  See `documentation/provider/gcloud.md` for examples.

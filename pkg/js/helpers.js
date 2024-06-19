@@ -427,6 +427,44 @@ var DS = recordBuilder('DS', {
 // DHCID(name,target, recordModifiers...)
 var DHCID = recordBuilder('DHCID');
 
+// DNAME(name,target, recordModifiers...)
+var DNAME = recordBuilder('DNAME');
+
+// DNSKEY(name, flags, protocol, algorithm, publickey)
+var DNSKEY = recordBuilder('DNSKEY', {
+    args: [
+        ['name', _.isString],
+        ['flags', _.isNumber],
+        ['protocol', _.isNumber],
+        ['algorithm', _.isNumber],
+        ['publickey', _.isString],
+    ],
+    transform: function (record, args, modifiers) {
+        record.name = args.name;
+        record.dnskeyflags = args.flags;
+        record.dnskeyprotocol = args.protocol;
+        record.dnskeyalgorithm = args.algorithm;
+        record.dnskeypublickey = args.publickey;
+        record.target = args.target;
+    },
+});
+
+// name, priority, target, params
+var HTTPS = recordBuilder('HTTPS', {
+    args: [
+        ['name', _.isString],
+        ['priority', _.isNumber],
+        ['target', _.isString],
+        ['params', _.isString],
+    ],
+    transform: function (record, args, modifiers) {
+        record.name = args.name;
+        record.svcpriority = args.priority;
+        record.target = args.target;
+        record.svcparams = args.params;
+    },
+});
+
 // PTR(name,target, recordModifiers...)
 var PTR = recordBuilder('PTR');
 
@@ -505,6 +543,22 @@ var SSHFP = recordBuilder('SSHFP', {
         record.sshfpalgorithm = args.algorithm;
         record.sshfpfingerprint = args.fingerprint;
         record.target = args.value;
+    },
+});
+
+// name, priority, target, params
+var SVCB = recordBuilder('SVCB', {
+    args: [
+        ['name', _.isString],
+        ['priority', _.isNumber],
+        ['target', _.isString],
+        ['params', _.isString],
+    ],
+    transform: function (record, args, modifiers) {
+        record.name = args.name;
+        record.svcpriority = args.priority;
+        record.target = args.target;
+        record.svcparams = args.params;
     },
 });
 
@@ -868,11 +922,11 @@ function IGNORE(labelPattern, rtypePattern, targetPattern) {
 
 // IGNORE_NAME(name, rTypes)
 function IGNORE_NAME(name, rTypes) {
-  return IGNORE(name, rTypes)
+    return IGNORE(name, rTypes);
 }
 
 function IGNORE_TARGET(target, rType) {
-  return IGNORE("*", rType, target)
+    return IGNORE('*', rType, target);
 }
 
 // IMPORT_TRANSFORM(translation_table, domain)
@@ -1449,6 +1503,7 @@ function SPF_BUILDER(value) {
 // iodef_critical: Boolean if sending report is required/critical. If not supported, certificate should be refused. (optional)
 // issue: List of CAs which are allowed to issue certificates for the domain (creates one record for each).
 // issuewild: Allowed CAs which can issue wildcard certificates for this domain. (creates one record for each)
+// ttl: The time for TTL, integer or string. (default: not defined, using DefaultTTL)
 
 function CAA_BUILDER(value) {
     if (!value.label) {
@@ -1468,32 +1523,40 @@ function CAA_BUILDER(value) {
         throw 'CAA_BUILDER requires at least one entry at issue or issuewild';
     }
 
+    var CAA_TTL = function () {};
+    if (value.ttl) {
+        CAA_TTL = TTL(value.ttl);
+    }
     r = []; // The list of records to return.
 
     if (value.iodef) {
         if (value.iodef_critical) {
-            r.push(CAA(value.label, 'iodef', value.iodef, CAA_CRITICAL));
+            r.push(
+                CAA(value.label, 'iodef', value.iodef, CAA_CRITICAL, CAA_TTL)
+            );
         } else {
-            r.push(CAA(value.label, 'iodef', value.iodef));
+            r.push(CAA(value.label, 'iodef', value.iodef, CAA_TTL));
         }
     }
 
     if (value.issue) {
-        var flag = function() {};
+        var flag = function () {};
         if (value.issue_critical) {
-          flag = CAA_CRITICAL;
+            flag = CAA_CRITICAL;
         }
         for (var i = 0, len = value.issue.length; i < len; i++)
-            r.push(CAA(value.label, 'issue', value.issue[i], flag));
+            r.push(CAA(value.label, 'issue', value.issue[i], flag, CAA_TTL));
     }
 
     if (value.issuewild) {
-        var flag = function() {};
+        var flag = function () {};
         if (value.issuewild_critical) {
-          flag = CAA_CRITICAL;
+            flag = CAA_CRITICAL;
         }
         for (var i = 0, len = value.issuewild.length; i < len; i++)
-            r.push(CAA(value.label, 'issuewild', value.issuewild[i], flag));
+            r.push(
+                CAA(value.label, 'issuewild', value.issuewild[i], flag, CAA_TTL)
+            );
     }
 
     return r;

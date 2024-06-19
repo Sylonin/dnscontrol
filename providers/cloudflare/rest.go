@@ -3,7 +3,6 @@ package cloudflare
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"golang.org/x/net/idna"
@@ -13,9 +12,15 @@ import (
 )
 
 // get list of domains for account. Cache so the ids can be looked up from domain name
-func (c *cloudflareProvider) fetchDomainList() error {
+// The caller must do all locking.
+func (c *cloudflareProvider) cacheDomainList() error {
+	if c.domainIndex != nil {
+		return nil
+	}
+
 	c.domainIndex = map[string]string{}
 	c.nameservers = map[string][]string{}
+	//fmt.Printf("DEBUG: CLOUDFLARE POPULATING CACHE\n")
 	zones, err := c.cfClient.ListZones(context.Background())
 	if err != nil {
 		return fmt.Errorf("failed fetching domain list from cloudflare(%q): %s", c.cfClient.APIEmail, err)
@@ -23,11 +28,17 @@ func (c *cloudflareProvider) fetchDomainList() error {
 
 	for _, zone := range zones {
 		if encoded, err := idna.ToASCII(zone.Name); err == nil && encoded != zone.Name {
+			if _, ok := c.domainIndex[encoded]; ok {
+				fmt.Printf("WARNING: Zone %q appears twice in this cloudflare account\n", encoded)
+			}
 			c.domainIndex[encoded] = zone.ID
-			c.nameservers[encoded] = append(c.nameservers[encoded], zone.NameServers...)
+			c.nameservers[encoded] = zone.NameServers
+		}
+		if _, ok := c.domainIndex[zone.Name]; ok {
+			fmt.Printf("WARNING: Zone %q appears twice in this cloudflare account\n", zone.Name)
 		}
 		c.domainIndex[zone.Name] = zone.ID
-		c.nameservers[zone.Name] = append(c.nameservers[zone.Name], zone.NameServers...)
+		c.nameservers[zone.Name] = zone.NameServers
 	}
 
 	return nil
@@ -59,6 +70,15 @@ func (c *cloudflareProvider) createZone(domainName string) (string, error) {
 	return zone.ID, err
 }
 
+func cfDnskeyData(rec *models.RecordConfig) *cfRecData {
+	return &cfRecData{
+		Algorithm: rec.DnskeyAlgorithm,
+		Flags:     rec.DnskeyFlags,
+		Protocol:  rec.DnskeyProtocol,
+		PublicKey: rec.DnskeyPublicKey,
+	}
+}
+
 func cfDSData(rec *models.RecordConfig) *cfRecData {
 	return &cfRecData{
 		KeyTag:     rec.DsKeyTag,
@@ -85,7 +105,7 @@ func cfSrvData(rec *models.RecordConfig) *cfRecData {
 func cfCaaData(rec *models.RecordConfig) *cfRecData {
 	return &cfRecData{
 		Tag:   rec.CaaTag,
-		Flags: rec.CaaFlag,
+		Flags: uint16(rec.CaaFlag),
 		Value: rec.GetTargetField(),
 	}
 }
@@ -104,6 +124,14 @@ func cfSshfpData(rec *models.RecordConfig) *cfRecData {
 		Algorithm:   rec.SshfpAlgorithm,
 		HashType:    rec.SshfpFingerprint,
 		Fingerprint: rec.GetTargetField(),
+	}
+}
+
+func cfSvcbData(rec *models.RecordConfig) *cfRecData {
+	return &cfRecData{
+		Priority: rec.SvcPriority,
+		Target:   cfTarget(rec.GetTargetField()),
+		Value:    rec.SvcParams,
 	}
 }
 
@@ -163,11 +191,15 @@ func (c *cloudflareProvider) createRecDiff2(rec *models.RecordConfig, domainID s
 			} else if rec.Type == "SSHFP" {
 				cf.Data = cfSshfpData(rec)
 				cf.Name = rec.GetLabelFQDN()
+			} else if rec.Type == "DNSKEY" {
+				cf.Data = cfDnskeyData(rec)
 			} else if rec.Type == "DS" {
 				cf.Data = cfDSData(rec)
 			} else if rec.Type == "NAPTR" {
 				cf.Data = cfNaptrData(rec)
 				cf.Name = rec.GetLabelFQDN()
+			} else if rec.Type == "HTTPS" || rec.Type == "SVCB" {
+				cf.Data = cfSvcbData(rec)
 			}
 			resp, err := c.cfClient.CreateDNSRecord(context.Background(), cloudflare.ZoneIdentifier(domainID), cf)
 			if err != nil {
@@ -215,12 +247,17 @@ func (c *cloudflareProvider) modifyRecord(domainID, recID string, proxied bool, 
 	} else if rec.Type == "SSHFP" {
 		r.Data = cfSshfpData(rec)
 		r.Name = rec.GetLabelFQDN()
+	} else if rec.Type == "DNSKEY" {
+		r.Data = cfDnskeyData(rec)
+		r.Content = ""
 	} else if rec.Type == "DS" {
 		r.Data = cfDSData(rec)
 		r.Content = ""
 	} else if rec.Type == "NAPTR" {
 		r.Data = cfNaptrData(rec)
 		r.Name = rec.GetLabelFQDN()
+	} else if rec.Type == "HTTPS" || rec.Type == "SVCB" {
+		r.Data = cfSvcbData(rec)
 	}
 	_, err := c.cfClient.UpdateDNSRecord(context.Background(), cloudflare.ZoneIdentifier(domainID), r)
 	return err
@@ -236,6 +273,143 @@ func (c *cloudflareProvider) changeUniversalSSL(domainID string, state bool) err
 func (c *cloudflareProvider) getUniversalSSL(domainID string) (bool, error) {
 	result, err := c.cfClient.UniversalSSLSettingDetails(context.Background(), domainID)
 	return result.Enabled, err
+}
+
+func (c *cloudflareProvider) getSingleRedirects(id string, domain string) ([]*models.RecordConfig, error) {
+	rules, err := c.cfClient.GetEntrypointRuleset(context.Background(), cloudflare.ZoneIdentifier(id), "http_request_dynamic_redirect")
+	if err != nil {
+		return nil, fmt.Errorf("failed fetching redirect rule list cloudflare: %s", err)
+	}
+	//var rulelist []cloudflare.RulesetRule
+	//rulelist = rules.Rules
+	//rulelist := rules.Rules
+
+	//printer.Printf("DEBUG: rules %+v\n", rules)
+	recs := []*models.RecordConfig{}
+	for _, pr := range rules.Rules {
+		//printer.Printf("DEBUG: %+v\n", pr)
+
+		var thisPr = pr
+		r := &models.RecordConfig{
+			Type:     "CLOUDFLAREAPI_SINGLE_REDIRECT",
+			Original: thisPr,
+			TTL:      1,
+		}
+		r.SetLabel("@", domain)
+
+		// Extract the valuables from the rule, use it to make the sr:
+		srMatcher := pr.Expression
+		srReplacement := pr.ActionParameters.FromValue.TargetURL.Expression
+		code := int(pr.ActionParameters.FromValue.StatusCode)
+		sr := newCfsrFromAPIData(srMatcher, srReplacement, code)
+		//sr.SRRRuleList = rulelist
+		//printer.Printf("DEBUG: DESCRIPTION = %v\n", pr.Description)
+		sr.SRDisplay = pr.Description
+		// printer.Printf("DEBUG: PR = %+v\n", pr)
+		// printer.Printf("DEBUG: rules = %+v\n", rules)
+		sr.SRRRulesetID = rules.ID
+		sr.SRRRulesetRuleID = pr.ID //correct
+
+		r.CloudflareRedirect = sr
+		r.SetTarget(pr.Description)
+
+		recs = append(recs, r)
+	}
+
+	return recs, nil
+}
+
+func (c *cloudflareProvider) createSingleRedirect(domainID string, cfr models.CloudflareSingleRedirectConfig) error {
+
+	//printer.Printf("DEBUG: createSingleRedir: d=%v crf=%+v\n", domainID, cfr)
+	// Asumption for target:
+
+	newSingleRedirectRulesActionParameters := cloudflare.RulesetRuleActionParameters{}
+	newSingleRedirectRule := cloudflare.RulesetRule{}
+	newSingleRedirectRules := []cloudflare.RulesetRule{}
+	newSingleRedirectRules = append(newSingleRedirectRules, newSingleRedirectRule)
+	newSingleRedirect := cloudflare.UpdateEntrypointRulesetParams{}
+
+	// Preserve query string
+	preserveQueryString := true
+	newSingleRedirectRulesActionParameters.FromValue = &cloudflare.RulesetRuleActionParametersFromValue{}
+	// Redirect status code
+	newSingleRedirectRulesActionParameters.FromValue.StatusCode = uint16(cfr.Code)
+	// Incoming request expression
+	newSingleRedirectRules[0].Expression = cfr.SRMatcher
+	// Redirect expression
+	newSingleRedirectRulesActionParameters.FromValue.TargetURL.Expression = cfr.SRReplacement
+	// Redirect name
+	newSingleRedirectRules[0].Description = cfr.SRDisplay
+	// Rule action, should always be redirect in this case
+	newSingleRedirectRules[0].Action = "redirect"
+	// Phase should always be http_request_dynamic_redirect
+	newSingleRedirect.Phase = "http_request_dynamic_redirect"
+
+	// Assigns the values in the nested structs
+	newSingleRedirectRulesActionParameters.FromValue.PreserveQueryString = &preserveQueryString
+	newSingleRedirectRules[0].ActionParameters = &newSingleRedirectRulesActionParameters
+
+	// Get a list of current redirects so that the new redirect get appended to it
+	rules, err := c.cfClient.GetEntrypointRuleset(context.Background(), cloudflare.ZoneIdentifier(domainID), "http_request_dynamic_redirect")
+	if err != nil {
+		return fmt.Errorf("failed fetching redirect rule list cloudflare: %s", err)
+	}
+	newSingleRedirect.Rules = newSingleRedirectRules
+	newSingleRedirect.Rules = append(newSingleRedirect.Rules, rules.Rules...)
+
+	_, err = c.cfClient.UpdateEntrypointRuleset(context.Background(), cloudflare.ZoneIdentifier(domainID), newSingleRedirect)
+
+	return err
+}
+
+func (c *cloudflareProvider) deleteSingleRedirects(domainID string, cfr models.CloudflareSingleRedirectConfig) error {
+
+	// This block should delete rules using the as is Cloudflare Golang lib in theory, need to debug why it isn't
+	// updatedRuleset := cloudflare.UpdateEntrypointRulesetParams{}
+	// updatedRulesetRules := []cloudflare.RulesetRule{}
+
+	// rules, err := c.cfClient.GetEntrypointRuleset(context.Background(), cloudflare.ZoneIdentifier(domainID), "http_request_dynamic_redirect")
+	// if err != nil {
+	// 	return fmt.Errorf("failed fetching redirect rule list cloudflare: %s", err)
+	// }
+
+	// for _, rule := range rules.Rules {
+	// 	if rule.ID != cfr.SRRRulesetRuleID {
+	// 		updatedRulesetRules = append(updatedRulesetRules, rule)
+	// 	} else {
+	// 		printer.Printf("DEBUG: MATCH %v : %v\n", rule.ID, cfr.SRRRulesetRuleID)
+	// 	}
+	// }
+	// updatedRuleset.Rules = updatedRulesetRules
+	// _, err = c.cfClient.UpdateEntrypointRuleset(context.Background(), cloudflare.ZoneIdentifier(domainID), updatedRuleset)
+
+	// Old Code
+
+	// rules, err := c.cfClient.GetEntrypointRuleset(context.Background(), cloudflare.ZoneIdentifier(domainID), "http_request_dynamic_redirect")
+	// if err != nil {
+	// 	return err
+	// }
+	//printer.Printf("DEBUG: CALLING API DeleteRulesetRule: SRRRulesetID=%v, cfr.SRRRulesetRuleID=%v\n", cfr.SRRRulesetID, cfr.SRRRulesetRuleID)
+
+	err := c.cfClient.DeleteRulesetRule(context.Background(), cloudflare.ZoneIdentifier(domainID), cfr.SRRRulesetID, cfr.SRRRulesetRuleID)
+	// TODO(tlim): This is terrible.  It returns an error even when it is successful.
+	if strings.Contains(err.Error(), `"success": true,`) {
+		return nil
+	}
+
+	return err
+}
+
+func (c *cloudflareProvider) updateSingleRedirect(domainID string, oldrec, newrec *models.RecordConfig) error {
+	// rulesetID := cfr.SRRRulesetID
+	// rulesetRuleID := cfr.SRRRulesetRuleID
+	//printer.Printf("DEBUG: UPDATE-DEL domID=%v sr=%+v\n", domainID, cfr)
+	if err := c.deleteSingleRedirects(domainID, *oldrec.CloudflareRedirect); err != nil {
+		return err
+	}
+	//printer.Printf("DEBUG: UPDATE-CREATE domID=%v sr=%+v\n", domainID, newrec.CloudflareRedirect)
+	return c.createSingleRedirect(domainID, *newrec.CloudflareRedirect)
 }
 
 func (c *cloudflareProvider) getPageRules(id string, domain string) ([]*models.RecordConfig, error) {
@@ -260,11 +434,20 @@ func (c *cloudflareProvider) getPageRules(id string, domain string) ([]*models.R
 			TTL:      1,
 		}
 		r.SetLabel("@", domain)
-		r.SetTarget(fmt.Sprintf("%s,%s,%d,%d", // $FROM,$TO,$PRIO,$CODE
+		code := intZero(value["status_code"])
+		raw := fmt.Sprintf("%s,%s,%d,%d", // $FROM,$TO,$PRIO,$CODE
 			pr.Targets[0].Constraint.Value,
 			value["url"],
 			pr.Priority,
-			intZero(value["status_code"])))
+			code)
+		r.SetTarget(raw)
+
+		cr, err := newCfsrFromUserInput(raw, code, pr.Priority)
+		if err != nil {
+			return nil, err
+		}
+		r.CloudflareRedirect = cr
+
 		recs = append(recs, r)
 	}
 	return recs, nil
@@ -274,33 +457,43 @@ func (c *cloudflareProvider) deletePageRule(recordID, domainID string) error {
 	return c.cfClient.DeletePageRule(context.Background(), domainID, recordID)
 }
 
-func (c *cloudflareProvider) updatePageRule(recordID, domainID string, target string) error {
+func (c *cloudflareProvider) updatePageRule(recordID, domainID string, cfr models.CloudflareSingleRedirectConfig) error {
 	// maybe someday?
 	//c.apiProvider.UpdatePageRule(context.Background(), domainId, recordID, )
 	if err := c.deletePageRule(recordID, domainID); err != nil {
 		return err
 	}
-	return c.createPageRule(domainID, target)
+	return c.createPageRule(domainID, cfr)
 }
 
-func (c *cloudflareProvider) createPageRule(domainID string, target string) error {
+func (c *cloudflareProvider) createPageRule(domainID string, cfr models.CloudflareSingleRedirectConfig) error {
+	//printer.Printf("DEBUG: called createPageRule(%s, %+v)\n", domainID, cfr)
 	// from to priority code
-	parts := strings.Split(target, ",")
-	priority, _ := strconv.Atoi(parts[2])
-	code, _ := strconv.Atoi(parts[3])
+	// parts := strings.Split(target, ",")
+	// priority, _ := strconv.Atoi(parts[2])
+	// code, _ := strconv.Atoi(parts[3])
+	// printer.Printf("DEBUG: pr.PageRule target = %v\n", target)
+	// printer.Printf("DEBUG: pr.PageRule target = %v\n", parts[0])
+	// printer.Printf("DEBUG: pr.PageRule url    = %v\n", parts[1])
+	// printer.Printf("DEBUG: pr.PageRule code   = %v\n", code)
+	priority := cfr.PRPriority
+	code := cfr.Code
+	matcher := cfr.PRMatcher
+	replacement := cfr.PRReplacement
 	pr := cloudflare.PageRule{
 		Status:   "active",
 		Priority: priority,
 		Targets: []cloudflare.PageRuleTarget{
-			{Target: "url", Constraint: pageRuleConstraint{Operator: "matches", Value: parts[0]}},
+			{Target: "url", Constraint: pageRuleConstraint{Operator: "matches", Value: matcher}},
 		},
 		Actions: []cloudflare.PageRuleAction{
 			{ID: "forwarding_url", Value: &pageRuleFwdInfo{
 				StatusCode: code,
-				URL:        parts[1],
+				URL:        replacement,
 			}},
 		},
 	}
+	//printer.Printf("DEBUG: createPageRule pr=%+v\n", pr)
 	_, err := c.cfClient.CreatePageRule(context.Background(), domainID, pr)
 	return err
 }

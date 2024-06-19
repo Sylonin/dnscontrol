@@ -2,7 +2,9 @@
 
 package providers
 
-import "log"
+import (
+	"log"
+)
 
 // Capability is a bitmasked set of "features" that a provider supports. Only use constants from this package.
 type Capability uint32
@@ -16,6 +18,12 @@ const (
 	// CanAutoDNSSEC indicates that the provider can automatically handle DNSSEC,
 	// so folks can ask for that.
 	CanAutoDNSSEC Capability = iota
+
+	// CanConcur indicates the provider can be used concurrently.  Can()
+	// indicates that it has been tested and shown to work concurrently.
+	// Cannot() indicates it has not been tested OR it has been shown to not
+	// work when used concurrently.  The default is Cannot().
+	CanConcur
 
 	// CanGetZones indicates the provider supports the get-zones subcommand.
 	CanGetZones
@@ -35,6 +43,9 @@ const (
 	// CanUseDHCID indicates the provider can handle DHCID records
 	CanUseDHCID
 
+	// CanUseDNAME indicates the provider can handle DNAME records
+	CanUseDNAME
+
 	// CanUseDS indicates that the provider can handle DS record types. This
 	// implies CanUseDSForChildren without specifying the latter explicitly.
 	CanUseDS
@@ -42,6 +53,9 @@ const (
 	// CanUseDSForChildren indicates the provider can handle DS record types, but
 	// only for children records, not at the root of the zone.
 	CanUseDSForChildren
+
+	// CanUseHTTPS indicates the provider can handle HTTPS records
+	CanUseHTTPS
 
 	// CanUseLOC indicates whether service provider handles LOC records
 	CanUseLOC
@@ -64,19 +78,19 @@ const (
 	// CanUseSSHFP indicates the provider can handle SSHFP records
 	CanUseSSHFP
 
+	// CanUseSVCB indicates the provider can handle SVCB records
+	CanUseSVCB
+
 	// CanUseTLSA indicates the provider can handle TLSA records
 	CanUseTLSA
 
-	// CantUseNOPURGE indicates NO_PURGE is broken for this provider. To make it
-	// work would require complex emulation of an incremental update mechanism,
-	// so it is easier to simply mark this feature as not working for this
-	// provider.
-	CantUseNOPURGE
+	// CanUseDNSKEY indicates that the provider can handle DNSKEY records
+	CanUseDNSKEY
 
 	// DocCreateDomains means provider can add domains with the `dnscontrol create-domains` command
 	DocCreateDomains
 
-	// DocDualHost means provider allows full management of apex NS records, so we can safely dual-host with anothe provider
+	// DocDualHost means provider allows full management of apex NS records, so we can safely dual-host with another provider
 	DocDualHost
 
 	// DocOfficiallySupported means it is actively used and maintained by stack exchange

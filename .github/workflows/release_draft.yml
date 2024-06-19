@@ -42,7 +42,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: ^1.21
+        go-version: ^1.22
 
 # Stringer is needed because .goreleaser includes "go generate ./..."
     - name: Install stringer
@@ -52,7 +52,7 @@ jobs:
     -
       id: release
       name: Goreleaser release
-      uses: goreleaser/goreleaser-action@v5
+      uses: goreleaser/goreleaser-action@v6
       with:
         distribution: goreleaser
         version: latest

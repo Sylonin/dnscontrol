@@ -20,8 +20,11 @@ import (
 )
 
 var features = providers.DocumentationNotes{
+	// The default for unlisted capabilities is 'Cannot'.
+	// See providers/capabilities.go for the entire list of capabilities.
 	providers.CanAutoDNSSEC:          providers.Can(),
 	providers.CanGetZones:            providers.Can(),
+	providers.CanConcur:              providers.Cannot(),
 	providers.CanUseAlias:            providers.Can(),
 	providers.CanUseCAA:              providers.Can(),
 	providers.CanUseDS:               providers.Cannot(),
@@ -92,7 +95,9 @@ func (c *dnsimpleProvider) GetZoneRecords(domain string, meta map[string]string)
 			r.Name = "@"
 		}
 
-		if r.Type == "CNAME" || r.Type == "MX" || r.Type == "ALIAS" || r.Type == "NS" {
+		if r.Type == "CNAME" || r.Type == "ALIAS" || r.Type == "NS" {
+			r.Content += "."
+		} else if r.Type == "MX" && r.Content != "." {
 			r.Content += "."
 		}
 

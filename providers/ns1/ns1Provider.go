@@ -16,15 +16,23 @@ import (
 )
 
 var docNotes = providers.DocumentationNotes{
+	// The default for unlisted capabilities is 'Cannot'.
+	// See providers/capabilities.go for the entire list of capabilities.
 	providers.CanAutoDNSSEC:          providers.Can(),
 	providers.CanGetZones:            providers.Can(),
+	providers.CanConcur:              providers.Can(),
 	providers.CanUseAlias:            providers.Can(),
 	providers.CanUseCAA:              providers.Can(),
+	providers.CanUseDNAME:            providers.Can(),
 	providers.CanUseDS:               providers.Can(),
 	providers.CanUseDSForChildren:    providers.Can(),
+	providers.CanUseDHCID:            providers.Can(),
+	providers.CanUseHTTPS:            providers.Can(),
 	providers.CanUseLOC:              providers.Cannot(),
 	providers.CanUseNAPTR:            providers.Can(),
 	providers.CanUsePTR:              providers.Can(),
+	providers.CanUseSVCB:             providers.Can(),
+	providers.CanUseTLSA:             providers.Can(),
 	providers.DocCreateDomains:       providers.Can(),
 	providers.DocDualHost:            providers.Can(),
 	providers.DocOfficiallySupported: providers.Cannot(),
@@ -329,6 +337,17 @@ func buildRecord(recs models.Records, domain string, id string) *dns.Record {
 		} else if r.Type == "NS1_URLFWD" {
 			rec.Type = "URLFWD"
 			rec.AddAnswer(&dns.Answer{Rdata: strings.Fields(r.GetTargetField())})
+		} else if r.Type == "SVCB" || r.Type == "HTTPS" {
+			rec.AddAnswer(&dns.Answer{Rdata: []string{
+				strconv.Itoa(int(r.SvcPriority)),
+				r.GetTargetField(),
+				r.SvcParams}})
+		} else if r.Type == "TLSA" {
+			rec.AddAnswer(&dns.Answer{Rdata: []string{
+				strconv.Itoa(int(r.TlsaUsage)),
+				strconv.Itoa(int(r.TlsaSelector)),
+				strconv.Itoa(int(r.TlsaMatchingType)),
+				r.GetTargetField()}})
 		} else {
 			rec.AddAnswer(&dns.Answer{Rdata: strings.Fields(r.GetTargetField())})
 		}

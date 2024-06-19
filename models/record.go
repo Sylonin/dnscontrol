@@ -22,6 +22,7 @@ import (
 //	  ANAME  // Technically not an official rtype yet.
 //	  CAA
 //	  CNAME
+//	  HTTPS
 //	  LOC
 //	  MX
 //	  NAPTR
@@ -30,6 +31,7 @@ import (
 //	  SOA
 //	  SRV
 //	  SSHFP
+//	  SVCB
 //	  TLSA
 //	  TXT
 //	Pseudo-Types: (alphabetical)
@@ -37,6 +39,7 @@ import (
 //	  CF_REDIRECT
 //	  CF_TEMP_REDIRECT
 //	  CF_WORKER_ROUTE
+//	  CLOUDFLAREAPI_SINGLE_REDIRECT
 //	  CLOUDNS_WR
 //	  FRAME
 //	  IMPORT_TRANSFORM
@@ -48,6 +51,8 @@ import (
 //	  URL
 //	  URL301
 //	  WORKER_ROUTE
+//
+// NOTE: All NEW record types should be prefixed with the provider name (Correct: CLOUDFLAREAPI_SINGLE_REDIRECT. Wrong: CF_REDIRECT)
 //
 // Notes about the fields:
 //
@@ -104,6 +109,10 @@ type RecordConfig struct {
 	DsAlgorithm      uint8             `json:"dsalgorithm,omitempty"`
 	DsDigestType     uint8             `json:"dsdigesttype,omitempty"`
 	DsDigest         string            `json:"dsdigest,omitempty"`
+	DnskeyFlags      uint16            `json:"dnskeyflags,omitempty"`
+	DnskeyProtocol   uint8             `json:"dnskeyprotocol,omitempty"`
+	DnskeyAlgorithm  uint8             `json:"dnskeyalgorithm,omitempty"`
+	DnskeyPublicKey  string            `json:"dnskeypublickey,omitempty"`
 	LocVersion       uint8             `json:"locversion,omitempty"`
 	LocSize          uint8             `json:"locsize,omitempty"`
 	LocHorizPre      uint8             `json:"lochorizpre,omitempty"`
@@ -124,12 +133,38 @@ type RecordConfig struct {
 	SoaRetry         uint32            `json:"soaretry,omitempty"`
 	SoaExpire        uint32            `json:"soaexpire,omitempty"`
 	SoaMinttl        uint32            `json:"soaminttl,omitempty"`
+	SvcPriority      uint16            `json:"svcpriority,omitempty"`
+	SvcParams        string            `json:"svcparams,omitempty"`
 	TlsaUsage        uint8             `json:"tlsausage,omitempty"`
 	TlsaSelector     uint8             `json:"tlsaselector,omitempty"`
 	TlsaMatchingType uint8             `json:"tlsamatchingtype,omitempty"`
 	R53Alias         map[string]string `json:"r53_alias,omitempty"`
 	AzureAlias       map[string]string `json:"azure_alias,omitempty"`
 	UnknownTypeName  string            `json:"unknown_type_name,omitempty"`
+
+	// Cloudflare-specific fields:
+	// When these are used, .target is set to a human-readable version (only to be used for display purposes).
+	CloudflareRedirect *CloudflareSingleRedirectConfig `json:"cloudflareapi_redirect,omitempty"`
+}
+
+// CloudflareSingleRedirectConfig contains info about a Cloudflare Single Redirect.
+//
+//	When these are used, .target is set to a human-readable version (only to be used for display purposes).
+type CloudflareSingleRedirectConfig struct {
+	//
+	Code int `json:"code,omitempty"` // 301 or 302
+	// PR == PageRule
+	PRDisplay     string `json:"pr_display,omitempty"` // How is this displayed to the user
+	PRMatcher     string `json:"pr_matcher,omitempty"`
+	PRReplacement string `json:"pr_replacement,omitempty"`
+	PRPriority    int    `json:"pr_priority,omitempty"` // Really an identifier for the rule.
+	//
+	// SR == SingleRedirect
+	SRDisplay        string `json:"sr_display,omitempty"` // How is this displayed to the user
+	SRMatcher        string `json:"sr_matcher,omitempty"`
+	SRReplacement    string `json:"sr_replacement,omitempty"`
+	SRRRulesetID     string `json:"sr_rulesetid,omitempty"`
+	SRRRulesetRuleID string `json:"sr_rulesetruleid,omitempty"`
 }
 
 // MarshalJSON marshals RecordConfig.
@@ -172,6 +207,10 @@ func (rc *RecordConfig) UnmarshalJSON(b []byte) error {
 		DsAlgorithm      uint8             `json:"dsalgorithm,omitempty"`
 		DsDigestType     uint8             `json:"dsdigesttype,omitempty"`
 		DsDigest         string            `json:"dsdigest,omitempty"`
+		DnskeyFlags      uint16            `json:"dnskeyflags,omitempty"`
+		DnskeyProtocol   uint8             `json:"dnskeyprotocol,omitempty"`
+		DnskeyAlgorithm  uint8             `json:"dnskeyalgorithm,omitempty"`
+		DnskeyPublicKey  string            `json:"dnskeypublickey,omitempty"`
 		LocVersion       uint8             `json:"locversion,omitempty"`
 		LocSize          uint8             `json:"locsize,omitempty"`
 		LocHorizPre      uint8             `json:"lochorizpre,omitempty"`
@@ -192,6 +231,8 @@ func (rc *RecordConfig) UnmarshalJSON(b []byte) error {
 		SoaRetry         uint32            `json:"soaretry,omitempty"`
 		SoaExpire        uint32            `json:"soaexpire,omitempty"`
 		SoaMinttl        uint32            `json:"soaminttl,omitempty"`
+		SvcPriority      uint16            `json:"svcpriority,omitempty"`
+		SvcParams        string            `json:"svcparams,omitempty"`
 		TlsaUsage        uint8             `json:"tlsausage,omitempty"`
 		TlsaSelector     uint8             `json:"tlsaselector,omitempty"`
 		TlsaMatchingType uint8             `json:"tlsamatchingtype,omitempty"`
@@ -361,11 +402,22 @@ func (rc *RecordConfig) ToRR() dns.RR {
 		rr.(*dns.CNAME).Target = rc.GetTargetField()
 	case dns.TypeDHCID:
 		rr.(*dns.DHCID).Digest = rc.GetTargetField()
+	case dns.TypeDNAME:
+		rr.(*dns.DNAME).Target = rc.GetTargetField()
 	case dns.TypeDS:
 		rr.(*dns.DS).Algorithm = rc.DsAlgorithm
 		rr.(*dns.DS).DigestType = rc.DsDigestType
 		rr.(*dns.DS).Digest = rc.DsDigest
 		rr.(*dns.DS).KeyTag = rc.DsKeyTag
+	case dns.TypeDNSKEY:
+		rr.(*dns.DNSKEY).Flags = rc.DnskeyFlags
+		rr.(*dns.DNSKEY).Protocol = rc.DnskeyProtocol
+		rr.(*dns.DNSKEY).Algorithm = rc.DnskeyAlgorithm
+		rr.(*dns.DNSKEY).PublicKey = rc.DnskeyPublicKey
+	case dns.TypeHTTPS:
+		rr.(*dns.HTTPS).Priority = rc.SvcPriority
+		rr.(*dns.HTTPS).Target = rc.GetTargetField()
+		rr.(*dns.HTTPS).Value = rc.GetSVCBValue()
 	case dns.TypeLOC:
 		// fmt.Printf("ToRR long: %d, lat:%d, sz: %d, hz:%d, vt:%d\n", rc.LocLongitude, rc.LocLatitude, rc.LocSize, rc.LocHorizPre, rc.LocVertPre)
 		// fmt.Printf("ToRR rc: %+v\n", *rc)
@@ -409,6 +461,10 @@ func (rc *RecordConfig) ToRR() dns.RR {
 		rr.(*dns.SSHFP).Algorithm = rc.SshfpAlgorithm
 		rr.(*dns.SSHFP).Type = rc.SshfpFingerprint
 		rr.(*dns.SSHFP).FingerPrint = rc.GetTargetField()
+	case dns.TypeSVCB:
+		rr.(*dns.SVCB).Priority = rc.SvcPriority
+		rr.(*dns.SVCB).Target = rc.GetTargetField()
+		rr.(*dns.SVCB).Value = rc.GetSVCBValue()
 	case dns.TypeTLSA:
 		rr.(*dns.TLSA).Usage = rc.TlsaUsage
 		rr.(*dns.TLSA).MatchingType = rc.TlsaMatchingType
@@ -429,7 +485,8 @@ func (rc *RecordConfig) ToRR() dns.RR {
 func (rc *RecordConfig) GetDependencies() []string {
 
 	switch rc.Type {
-	case "NS", "SRV", "CNAME", "MX", "ALIAS", "AZURE_ALIAS", "R53_ALIAS":
+	// #rtype_variations
+	case "NS", "SRV", "CNAME", "DNAME", "MX", "ALIAS", "AZURE_ALIAS", "R53_ALIAS":
 		return []string{
 			rc.target,
 		}
@@ -465,6 +522,21 @@ func (rc *RecordConfig) Key() RecordKey {
 		}
 	}
 	return RecordKey{rc.NameFQDN, t}
+}
+
+// GetSVCBValue returns the SVCB Key/Values as a list of Key/Values.
+func (rc *RecordConfig) GetSVCBValue() []dns.SVCBKeyValue {
+	record, err := dns.NewRR(fmt.Sprintf("%s %s %d %s %s", rc.NameFQDN, rc.Type, rc.SvcPriority, rc.target, rc.SvcParams))
+	if err != nil {
+		log.Fatalf("could not parse SVCB record: %s", err)
+	}
+	switch r := record.(type) {
+	case *dns.HTTPS:
+		return r.Value
+	case *dns.SVCB:
+		return r.Value
+	}
+	return nil
 }
 
 // Records is a list of *RecordConfig.
@@ -536,11 +608,11 @@ func Downcase(recs []*RecordConfig) {
 		r.Name = strings.ToLower(r.Name)
 		r.NameFQDN = strings.ToLower(r.NameFQDN)
 		switch r.Type { // #rtype_variations
-		case "AKAMAICDN", "AAAA", "ANAME", "CNAME", "DS", "MX", "NS", "NAPTR", "PTR", "SRV", "TLSA":
+		case "AKAMAICDN", "ALIAS", "AAAA", "ANAME", "CNAME", "DNAME", "DS", "DNSKEY", "MX", "NS", "NAPTR", "PTR", "SRV", "TLSA":
 			// Target is case insensitive. Downcase it.
 			r.target = strings.ToLower(r.target)
 			// BUGFIX(tlim): isn't ALIAS in the wrong case statement?
-		case "A", "ALIAS", "CAA", "CF_REDIRECT", "CF_TEMP_REDIRECT", "CF_WORKER_ROUTE", "DHCID", "IMPORT_TRANSFORM", "LOC", "SSHFP", "TXT":
+		case "A", "CAA", "CF_REDIRECT", "CF_TEMP_REDIRECT", "CF_WORKER_ROUTE", "DHCID", "IMPORT_TRANSFORM", "LOC", "SSHFP", "TXT":
 			// Do nothing. (IP address or case sensitive target)
 		case "SOA":
 			if r.target != "DEFAULT_NOT_SET." {
@@ -561,10 +633,10 @@ func CanonicalizeTargets(recs []*RecordConfig, origin string) {
 
 	for _, r := range recs {
 		switch r.Type { // #rtype_variations
-		case "ANAME", "CNAME", "DS", "MX", "NS", "NAPTR", "PTR", "SRV":
+		case "ALIAS", "ANAME", "CNAME", "DNAME", "DS", "DNSKEY", "MX", "NS", "NAPTR", "PTR", "SRV":
 			// Target is a hostname that might be a shortname. Turn it into a FQDN.
 			r.target = dnsutil.AddOrigin(r.target, originFQDN)
-		case "A", "AKAMAICDN", "ALIAS", "CAA", "DHCID", "CF_REDIRECT", "CF_TEMP_REDIRECT", "CF_WORKER_ROUTE", "IMPORT_TRANSFORM", "LOC", "SSHFP", "TLSA", "TXT":
+		case "A", "AKAMAICDN", "CAA", "DHCID", "CF_REDIRECT", "CF_TEMP_REDIRECT", "CF_WORKER_ROUTE", "HTTPS", "IMPORT_TRANSFORM", "LOC", "SSHFP", "SVCB", "TLSA", "TXT":
 			// Do nothing.
 		case "SOA":
 			if r.target != "DEFAULT_NOT_SET." {

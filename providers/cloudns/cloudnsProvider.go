@@ -38,10 +38,13 @@ func NewCloudns(m map[string]string, metadata json.RawMessage) (providers.DNSSer
 }
 
 var features = providers.DocumentationNotes{
-	//providers.CanUseDS:               providers.Can(), // in ClouDNS we can add  DS record just for a subdomain(child)
+	// The default for unlisted capabilities is 'Cannot'.
+	// See providers/capabilities.go for the entire list of capabilities.
 	providers.CanGetZones:            providers.Can(),
+	providers.CanConcur:              providers.Cannot(),
 	providers.CanUseAlias:            providers.Can(),
 	providers.CanUseCAA:              providers.Can(),
+	providers.CanUseDNAME:            providers.Can(),
 	providers.CanUseDSForChildren:    providers.Can(),
 	providers.CanUseLOC:              providers.Cannot(),
 	providers.CanUsePTR:              providers.Can(),
@@ -266,7 +269,7 @@ func toRc(domain string, r *domainRecord) *models.RecordConfig {
 	switch rtype := r.Type; rtype { // #rtype_variations
 	case "TXT":
 		rc.SetTargetTXT(r.Target)
-	case "CNAME", "MX", "NS", "SRV", "ALIAS", "PTR":
+	case "CNAME", "DNAME", "MX", "NS", "SRV", "ALIAS", "PTR":
 		rc.SetTarget(dnsutil.AddOrigin(r.Target+".", domain))
 	case "CAA":
 		caaFlag, _ := strconv.ParseUint(r.CaaFlag, 10, 8)
@@ -321,7 +324,7 @@ func toReq(rc *models.RecordConfig) (requestParams, error) {
 	}
 
 	switch rc.Type { // #rtype_variations
-	case "A", "AAAA", "NS", "PTR", "TXT", "SOA", "ALIAS", "CNAME", "WR":
+	case "A", "AAAA", "NS", "PTR", "TXT", "SOA", "ALIAS", "CNAME", "WR", "DNAME":
 		// Nothing special.
 	case "CLOUDNS_WR":
 		req["record-type"] = "WR"

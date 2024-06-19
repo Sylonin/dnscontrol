@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/StackExchange/dnscontrol/v4/models"
+	"github.com/StackExchange/dnscontrol/v4/pkg/bindserial"
 	"github.com/StackExchange/dnscontrol/v4/pkg/diff2"
 	"github.com/StackExchange/dnscontrol/v4/pkg/prettyzone"
 	"github.com/StackExchange/dnscontrol/v4/pkg/printer"
@@ -30,19 +31,25 @@ import (
 )
 
 var features = providers.DocumentationNotes{
+	// The default for unlisted capabilities is 'Cannot'.
+	// See providers/capabilities.go for the entire list of capabilities.
 	providers.CanAutoDNSSEC:          providers.Can("Just writes out a comment indicating DNSSEC was requested"),
 	providers.CanGetZones:            providers.Can(),
+	providers.CanConcur:              providers.Cannot(),
 	providers.CanUseCAA:              providers.Can(),
 	providers.CanUseDHCID:            providers.Can(),
+	providers.CanUseDNAME:            providers.Can(),
 	providers.CanUseDS:               providers.Can(),
+	providers.CanUseDNSKEY:           providers.Can(),
+	providers.CanUseHTTPS:            providers.Can(),
 	providers.CanUseLOC:              providers.Can(),
 	providers.CanUseNAPTR:            providers.Can(),
 	providers.CanUsePTR:              providers.Can(),
 	providers.CanUseSOA:              providers.Can(),
 	providers.CanUseSRV:              providers.Can(),
 	providers.CanUseSSHFP:            providers.Can(),
+	providers.CanUseSVCB:             providers.Can(),
 	providers.CanUseTLSA:             providers.Can(),
-	providers.CantUseNOPURGE:         providers.Cannot(),
 	providers.DocCreateDomains:       providers.Can("Driver just maintains list of zone files. It should automatically add missing ones."),
 	providers.DocDualHost:            providers.Can(),
 	providers.DocOfficiallySupported: providers.Can(),
@@ -111,14 +118,13 @@ func (s SoaDefaults) String() string {
 
 // bindProvider is the provider handle for the bindProvider driver.
 type bindProvider struct {
-	DefaultNS           []string    `json:"default_ns"`
-	DefaultSoa          SoaDefaults `json:"default_soa"`
-	nameservers         []*models.Nameserver
-	directory           string
-	filenameformat      string
-	zonefile            string // Where the zone data is e texpected
-	zoneFileFound       bool   // Did the zonefile exist?
-	skipNextSoaIncrease bool   // skip next SOA increment (for testing only)
+	DefaultNS      []string    `json:"default_ns"`
+	DefaultSoa     SoaDefaults `json:"default_soa"`
+	nameservers    []*models.Nameserver
+	directory      string
+	filenameformat string
+	zonefile       string // Where the zone data is e texpected
+	zoneFileFound  bool   // Did the zonefile exist?
 }
 
 // GetNameservers returns the nameservers for a domain.
@@ -235,7 +241,6 @@ func (c *bindProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, foundR
 		desiredSoa = dc.Records[len(dc.Records)-1]
 	} else {
 		*desiredSoa = *soaRec
-		c.skipNextSoaIncrease = true
 	}
 
 	var msgs []string
@@ -267,8 +272,11 @@ func (c *bindProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, foundR
 	)
 
 	// We only change the serial number if there is a change.
-	if !c.skipNextSoaIncrease {
-		desiredSoa.SoaSerial = nextSerial
+	desiredSoa.SoaSerial = nextSerial
+
+	// If the --bindserial flag is used, force the serial to that value
+	if bindserial.ForcedValue != 0 {
+		desiredSoa.SoaSerial = uint32(bindserial.ForcedValue & 0xFFFF)
 	}
 
 	corrections = append(corrections,

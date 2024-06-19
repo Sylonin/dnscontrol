@@ -25,6 +25,7 @@ var endIdx = flag.Int("end", -1, "Test index to stop after")
 var verbose = flag.Bool("verbose", false, "Print corrections as you run them")
 var printElapsed = flag.Bool("elapsed", false, "Print elapsed time for each testgroup")
 var enableCFWorkers = flag.Bool("cfworkers", true, "Set false to disable CF worker tests")
+var enableCFRedirectMode = flag.String("cfredirect", "", "cloudflare pagerule tests: default=page_rules, c=convert old to enw, n=new-style, o=none")
 
 func init() {
 	testing.Init()
@@ -65,11 +66,21 @@ func getProvider(t *testing.T) (providers.DNSServiceProvider, string, map[string
 		// use this feature. Maybe because we didn't have the capabilities
 		// feature at the time?
 		if name == "CLOUDFLAREAPI" {
+			items := []string{}
 			if *enableCFWorkers {
-				metadata = []byte(`{ "manage_redirects": true, "manage_workers": true }`)
-			} else {
-				metadata = []byte(`{ "manage_redirects": true }`)
+				items = append(items, `"manage_workers": true`)
 			}
+			switch *enableCFRedirectMode {
+			case "":
+				items = append(items, `"manage_redirects": true`)
+			case "c":
+				items = append(items, `"manage_redirects": true`)
+				items = append(items, `"manage_single_redirects": true`)
+			case "n":
+				items = append(items, `"manage_single_redirects": true`)
+			case "o":
+			}
+			metadata = []byte(`{ ` + strings.Join(items, `, `) + ` }`)
 		}
 
 		provider, err := providers.CreateDNSProvider(name, cfg, metadata)
@@ -512,9 +523,26 @@ func dhcid(name, target string) *models.RecordConfig {
 	return makeRec(name, target, "DHCID")
 }
 
+func dname(name, target string) *models.RecordConfig {
+	return makeRec(name, target, "DNAME")
+}
+
 func ds(name string, keyTag uint16, algorithm, digestType uint8, digest string) *models.RecordConfig {
 	r := makeRec(name, "", "DS")
 	r.SetTargetDS(keyTag, algorithm, digestType, digest)
+	return r
+}
+
+func dnskey(name string, flags uint16, protocol, algorithm uint8, publicKey string) *models.RecordConfig {
+	r := makeRec(name, "", "DNSKEY")
+	r.SetTargetDNSKEY(flags, protocol, algorithm, publicKey)
+	return r
+}
+
+func https(name string, priority uint16, target string, params string) *models.RecordConfig {
+	r := makeRec(name, target, "HTTPS")
+	r.SvcPriority = priority
+	r.SvcParams = params
 	return r
 }
 
@@ -607,6 +635,13 @@ func srv(name string, priority, weight, port uint16, target string) *models.Reco
 func sshfp(name string, algorithm uint8, fingerprint uint8, target string) *models.RecordConfig {
 	r := makeRec(name, target, "SSHFP")
 	r.SetTargetSSHFP(algorithm, fingerprint, target)
+	return r
+}
+
+func svcb(name string, priority uint16, target string, params string) *models.RecordConfig {
+	r := makeRec(name, target, "SVCB")
+	r.SvcPriority = priority
+	r.SvcParams = params
 	return r
 }
 
@@ -788,7 +823,7 @@ func makeTests() []*TestGroup {
 
 	// clear() is the same as tc("Empty").  It removes all records.
 	// Each testgroup() begins with clear() automagically. You do not
-	// have to include the clear() in teach testgroup().
+	// have to include the clear() in each testgroup().
 
 	tests := []*TestGroup{
 
@@ -871,6 +906,13 @@ func makeTests() []*TestGroup {
 		testgroup("CNAME",
 			tc("Create a CNAME", cname("testcname", "www.google.com.")),
 			tc("Change CNAME target", cname("testcname", "www.yahoo.com.")),
+		),
+
+		testgroup("CNAME-short",
+			tc("Create a CNAME",
+				a("foo", "1.2.3.4"),
+				cname("testcname", "foo"),
+			),
 		),
 
 		// MX
@@ -999,6 +1041,25 @@ func makeTests() []*TestGroup {
 			tc("Change back to CNAME", cname("foo", "google2.com.")),
 		),
 
+		testgroup("HTTPS",
+			requires(providers.CanUseHTTPS),
+			tc("Create a HTTPS record", https("@", 1, "test.com.", "port=80")),
+			tc("Change HTTPS priority", https("@", 2, "test.com.", "port=80")),
+			tc("Change HTTPS target", https("@", 2, ".", "port=80")),
+			tc("Change HTTPS params", https("@", 2, ".", "port=99")),
+			tc("Change HTTPS params-empty", https("@", 2, ".", "")),
+			tc("Change HTTPS all", https("@", 3, "example.com.", "port=100")),
+		),
+
+		testgroup("SVCB",
+			requires(providers.CanUseSVCB),
+			tc("Create a SVCB record", svcb("@", 1, "test.com.", "port=80")),
+			tc("Change SVCB priority", svcb("@", 2, "test.com.", "port=80")),
+			tc("Change SVCB target", svcb("@", 2, ".", "port=80")),
+			tc("Change SVCB params", svcb("@", 2, ".", "port=99")),
+			tc("Change SVCB params-empty", svcb("@", 2, ".", "")),
+			tc("Change SVCB all", svcb("@", 3, "example.com.", "port=100")),
+		),
 		//// Test edge cases from various types.
 
 		// Narrative: Every DNS record type has some weird edge-case that
@@ -1591,7 +1652,22 @@ func makeTests() []*TestGroup {
 		testgroup("DHCID",
 			requires(providers.CanUseDHCID),
 			tc("Create DHCID record", dhcid("test", "AAIBY2/AuCccgoJbsaxcQc9TUapptP69lOjxfNuVAA2kjEA=")),
-			tc("Modify DHCID record", dhcid("test", "Test/AuCccgoJbsaxcQc9TUapptP69lOjxfNuVAA2kjEA=")),
+			tc("Modify DHCID record", dhcid("test", "AAAAAAAAuCccgoJbsaxcQc9TUapptP69lOjxfNuVAA2kjEA=")),
+		),
+
+		testgroup("DNAME",
+			requires(providers.CanUseDNAME),
+			tc("Create DNAME record", dname("test", "example.com.")),
+			tc("Modify DNAME record", dname("test", "example.net.")),
+			tc("Create DNAME record in non-FQDN", dname("a", "b")),
+		),
+
+		testgroup("DNSKEY",
+			requires(providers.CanUseDNSKEY),
+			tc("Create DNSKEY record", dnskey("test", 257, 3, 13, "fRnjbeUVyKvz1bDx2lPmu3KY1k64T358t8kP6Hjveos=")),
+			tc("Modify DNSKEY record 1", dnskey("test", 256, 3, 13, "fRnjbeUVyKvz1bDx2lPmu3KY1k64T358t8kP6Hjveos=")),
+			tc("Modify DNSKEY record 2", dnskey("test", 256, 3, 13, "whjtMiJP9C86l0oTJUxemuYtQ0RIZePWt6QETC2kkKM=")),
+			tc("Modify DNSKEY record 3", dnskey("test", 256, 3, 15, "whjtMiJP9C86l0oTJUxemuYtQ0RIZePWt6QETC2kkKM=")),
 		),
 
 		//// Vendor-specific record types
@@ -1605,6 +1681,14 @@ func makeTests() []*TestGroup {
 			requires(providers.CanUseAlias),
 			tc("ALIAS at root", alias("@", "foo.com.")),
 			tc("change it", alias("@", "foo2.com.")),
+		),
+
+		testgroup("ALIAS to nonfqdn",
+			requires(providers.CanUseAlias),
+			tc("ALIAS at root",
+				a("foo", "1.2.3.4"),
+				alias("@", "foo"),
+			),
 		),
 
 		testgroup("ALIAS on subdomain",
@@ -1757,6 +1841,14 @@ func makeTests() []*TestGroup {
 
 		// CLOUDFLAREAPI features
 
+		// CLOUDFLAREAPI: Redirects:
+
+		// go test -v -verbose -provider CLOUDFLAREAPI                // PAGE_RULEs
+		// go test -v -verbose -provider CLOUDFLAREAPI -cfredirect=c  // Convert: Convert page rules to Single Redirect
+		// go test -v -verbose -provider CLOUDFLAREAPI -cfredirect=n  // New: Convert old to new Single Redirect
+		// ProTip: Add this to just run this test:
+		//  -start 59 -end 60
+
 		testgroup("CF_REDIRECT",
 			only("CLOUDFLAREAPI"),
 			tc("redir", cfRedir("cnn.**current-domain-no-trailing**/*", "https://www.cnn.com/$1")),
@@ -1765,32 +1857,32 @@ func makeTests() []*TestGroup {
 
 			// Removed these for speed.  They tested if order matters,
 			// which it doesn't seem to.  Re-add if needed.
-			//clear(),
-			//tc("multipleA",
-			//	cfRedir("cnn.**current-domain-no-trailing**/*", "https://www.cnn.com/$1"),
-			//	cfRedir("msnbc.**current-domain-no-trailing**/*", "https://msnbc.cnn.com/$1"),
-			//),
-			//clear(),
-			//tc("multipleB",
-			//	cfRedir("msnbc.**current-domain-no-trailing**/*", "https://msnbc.cnn.com/$1"),
-			//	cfRedir("cnn.**current-domain-no-trailing**/*", "https://www.cnn.com/$1"),
-			//),
-			//tc("change1",
-			//	cfRedir("msnbc.**current-domain-no-trailing**/*", "https://msnbc.cnn.com/$1"),
-			//	cfRedir("cnn.**current-domain-no-trailing**/*", "https://change.cnn.com/$1"),
-			//),
-			//tc("change1",
-			//	cfRedir("msnbc.**current-domain-no-trailing**/*", "https://msnbc.cnn.com/$1"),
-			//	cfRedir("cablenews.**current-domain-no-trailing**/*", "https://change.cnn.com/$1"),
-			//),
+			clear(),
+			tc("multipleA",
+				cfRedir("cnn.**current-domain-no-trailing**/*", "https://www.cnn.com/$1"),
+				cfRedir("msnbc.**current-domain-no-trailing**/*", "https://msnbc.cnn.com/$1"),
+			),
+			clear(),
+			tc("multipleB",
+				cfRedir("msnbc.**current-domain-no-trailing**/*", "https://msnbc.cnn.com/$1"),
+				cfRedir("cnn.**current-domain-no-trailing**/*", "https://www.cnn.com/$1"),
+			),
+			tc("change1",
+				cfRedir("msnbc.**current-domain-no-trailing**/*", "https://msnbc.cnn.com/$1"),
+				cfRedir("cnn.**current-domain-no-trailing**/*", "https://change.cnn.com/$1"),
+			),
+			tc("change1",
+				cfRedir("msnbc.**current-domain-no-trailing**/*", "https://msnbc.cnn.com/$1"),
+				cfRedir("cablenews.**current-domain-no-trailing**/*", "https://change.cnn.com/$1"),
+			),
 
-			// TODO(tlim): Fix this test case. It is currently failing.
-			//clear(),
-			//tc("multiple3",
-			//	cfRedir("msnbc.**current-domain-no-trailing**/*", "https://msnbc.cnn.com/$1"),
-			//	cfRedir("cnn.**current-domain-no-trailing**/*", "https://www.cnn.com/$1"),
-			//	cfRedir("nytimes.**current-domain-no-trailing**/*", "https://www.nytimes.com/$1"),
-			//),
+			// NB(tlim): This test case used to fail but mysteriously started working.
+			clear(),
+			tc("multiple3",
+				cfRedir("msnbc.**current-domain-no-trailing**/*", "https://msnbc.cnn.com/$1"),
+				cfRedir("cnn.**current-domain-no-trailing**/*", "https://www.cnn.com/$1"),
+				cfRedir("nytimes.**current-domain-no-trailing**/*", "https://www.nytimes.com/$1"),
+			),
 
 			// Repeat the above tests using CF_TEMP_REDIR instead
 			clear(),
@@ -1815,13 +1907,22 @@ func makeTests() []*TestGroup {
 				cfRedirTemp("msnbc.**current-domain-no-trailing**/*", "https://msnbc.cnn.com/$1"),
 				cfRedirTemp("cablenews.**current-domain-no-trailing**/*", "https://change.cnn.com/$1"),
 			),
-			// TODO(tlim): Fix this test case:
-			//tc("tempmultiple3",
-			//	cfRedirTemp("msnbc.**current-domain-no-trailing**/*", "https://msnbc.cnn.com/$1"),
-			//	cfRedirTemp("cnn.**current-domain-no-trailing**/*", "https://www.cnn.com/$1"),
-			//	cfRedirTemp("nytimes.**current-domain-no-trailing**/*", "https://www.nytimes.com/$1"),
-			//),
+			// NB(tlim): This test case used to fail but mysteriously started working.
+			tc("tempmultiple3",
+				cfRedirTemp("msnbc.**current-domain-no-trailing**/*", "https://msnbc.cnn.com/$1"),
+				cfRedirTemp("cnn.**current-domain-no-trailing**/*", "https://www.cnn.com/$1"),
+				cfRedirTemp("nytimes.**current-domain-no-trailing**/*", "https://www.nytimes.com/$1"),
+			),
 		),
+
+		testgroup("CF_REDIRECT_CONVERT",
+			only("CLOUDFLAREAPI"),
+			tc("start301", cfRedir("cnn.**current-domain-no-trailing**/*", "https://www.cnn.com/$1")),
+			tc("convert302", cfRedirTemp("cnn.**current-domain-no-trailing**/*", "https://www.cnn.com/$1")),
+			tc("convert301", cfRedir("cnn.**current-domain-no-trailing**/*", "https://www.cnn.com/$1")),
+		),
+
+		// CLOUDFLAREAPI: PROXY
 
 		testgroup("CF_PROXY A create",
 			only("CLOUDFLAREAPI"),

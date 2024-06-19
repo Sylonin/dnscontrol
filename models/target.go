@@ -117,6 +117,8 @@ func (rc *RecordConfig) GetTargetDebug() string {
 		content += fmt.Sprintf(" caatag=%s caaflag=%d", rc.CaaTag, rc.CaaFlag)
 	case "DS":
 		content += fmt.Sprintf(" ds_algorithm=%d ds_keytag=%d ds_digesttype=%d ds_digest=%s", rc.DsAlgorithm, rc.DsKeyTag, rc.DsDigestType, rc.DsDigest)
+	case "DNSKEY":
+		content += fmt.Sprintf(" dnskey_flags=%d dnskey_protocol=%d dnskey_algorithm=%d dnskey_publickey=%s", rc.DnskeyFlags, rc.DnskeyProtocol, rc.DnskeyAlgorithm, rc.DnskeyPublicKey)
 	case "MX":
 		content += fmt.Sprintf(" pref=%d", rc.MxPreference)
 	case "NAPTR":
@@ -129,6 +131,9 @@ func (rc *RecordConfig) GetTargetDebug() string {
 		content += fmt.Sprintf(" srvpriority=%d srvweight=%d srvport=%d", rc.SrvPriority, rc.SrvWeight, rc.SrvPort)
 	case "SSHFP":
 		content += fmt.Sprintf(" sshfpalgorithm=%d sshfpfingerprint=%d", rc.SshfpAlgorithm, rc.SshfpFingerprint)
+	case "SVCB", "HTTPS":
+		// HTTPS is only a special subform of the SVCB Record
+		content += fmt.Sprintf(" priority=%d params=%v", rc.SvcPriority, rc.SvcParams)
 	case "TLSA":
 		content += fmt.Sprintf(" tlsausage=%d tlsaselector=%d tlsamatchingtype=%d", rc.TlsaUsage, rc.TlsaSelector, rc.TlsaMatchingType)
 	default:

@@ -60,7 +60,10 @@ func validateRecordTypes(rec *models.RecordConfig, domain string, pTypes []strin
 		"CAA":              true,
 		"CNAME":            true,
 		"DHCID":            true,
+		"DNAME":            true,
 		"DS":               true,
+		"DNSKEY":           true,
+		"HTTPS":            true,
 		"IMPORT_TRANSFORM": false,
 		"LOC":              true,
 		"MX":               true,
@@ -70,6 +73,7 @@ func validateRecordTypes(rec *models.RecordConfig, domain string, pTypes []strin
 		"SOA":              true,
 		"SRV":              true,
 		"SSHFP":            true,
+		"SVCB":             true,
 		"TLSA":             true,
 		"TXT":              true,
 	}
@@ -194,6 +198,8 @@ func checkTargets(rec *models.RecordConfig, domain string) (errs []error) {
 		if labelFQDN == targetFQDN {
 			check(fmt.Errorf("CNAME loop (target points at itself)"))
 		}
+	case "DNAME":
+		check(checkTarget(target))
 	case "LOC":
 	case "MX":
 		check(checkTarget(target))
@@ -220,7 +226,7 @@ func checkTargets(rec *models.RecordConfig, domain string) (errs []error) {
 		}
 	case "SRV":
 		check(checkTarget(target))
-	case "CAA", "DHCID", "DS", "IMPORT_TRANSFORM", "SSHFP", "TLSA", "TXT":
+	case "CAA", "DHCID", "DNSKEY", "DS", "HTTPS", "IMPORT_TRANSFORM", "SSHFP", "SVCB", "TLSA", "TXT":
 	default:
 		if rec.Metadata["orig_custom_type"] != "" {
 			// it is a valid custom type. We perform no validation on target
@@ -321,10 +327,10 @@ func ValidateAndNormalizeConfig(config *models.DNSConfig) (errs []error) {
 				// be performed.
 				continue
 			}
-			// If NO_PURGE is in use, make sure this *isn't* a provider that *doesn't* support NO_PURGE.
-			if domain.KeepUnknown && providers.ProviderHasCapability(pType, providers.CantUseNOPURGE) {
-				errs = append(errs, fmt.Errorf("%s uses NO_PURGE which is not supported by %s(%s)", domain.Name, provider.Name, pType))
-			}
+			//			// If NO_PURGE is in use, make sure this *isn't* a provider that *doesn't* support NO_PURGE.
+			//			if domain.KeepUnknown && providers.ProviderHasCapability(pType, providers.CantUseNOPURGE) {
+			//				errs = append(errs, fmt.Errorf("%s uses NO_PURGE which is not supported by %s(%s)", domain.Name, provider.Name, pType))
+			//			}
 		}
 
 		// Normalize Nameservers.
@@ -382,7 +388,7 @@ func ValidateAndNormalizeConfig(config *models.DNSConfig) (errs []error) {
 			}
 
 			// Canonicalize Targets.
-			if rec.Type == "CNAME" || rec.Type == "MX" || rec.Type == "NS" || rec.Type == "SRV" {
+			if rec.Type == "ALIAS" || rec.Type == "CNAME" || rec.Type == "MX" || rec.Type == "NS" || rec.Type == "SRV" {
 				// #rtype_variations
 				// These record types have a target that is a hostname.
 				// We normalize them to a FQDN so there is less variation to handle.  If a
@@ -679,6 +685,9 @@ var providerCapabilityChecks = []pairTypeCapability{
 	capabilityCheck("AZURE_ALIAS", providers.CanUseAzureAlias),
 	capabilityCheck("CAA", providers.CanUseCAA),
 	capabilityCheck("DHCID", providers.CanUseDHCID),
+	capabilityCheck("DNAME", providers.CanUseDNAME),
+	capabilityCheck("DNSKEY", providers.CanUseDNSKEY),
+	capabilityCheck("HTTPS", providers.CanUseHTTPS),
 	capabilityCheck("LOC", providers.CanUseLOC),
 	capabilityCheck("NAPTR", providers.CanUseNAPTR),
 	capabilityCheck("PTR", providers.CanUsePTR),
@@ -686,6 +695,7 @@ var providerCapabilityChecks = []pairTypeCapability{
 	capabilityCheck("SOA", providers.CanUseSOA),
 	capabilityCheck("SRV", providers.CanUseSRV),
 	capabilityCheck("SSHFP", providers.CanUseSSHFP),
+	capabilityCheck("SVCB", providers.CanUseSVCB),
 	capabilityCheck("TLSA", providers.CanUseTLSA),
 
 	// DS needs special record-level checks

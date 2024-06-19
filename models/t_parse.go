@@ -78,7 +78,11 @@ func (rc *RecordConfig) PopulateFromStringFunc(rtype, contents, origin string, t
 		return rc.SetTargetCAAString(contents)
 	case "DS":
 		return rc.SetTargetDSString(contents)
+	case "DNSKEY":
+		return rc.SetTargetDNSKEYString(contents)
 	case "DHCID":
+		return rc.SetTarget(contents)
+	case "DNAME":
 		return rc.SetTarget(contents)
 	case "LOC":
 		return rc.SetTargetLOCString(origin, contents)
@@ -101,6 +105,8 @@ func (rc *RecordConfig) PopulateFromStringFunc(rtype, contents, origin string, t
 		return rc.SetTargetSRVString(contents)
 	case "SSHFP":
 		return rc.SetTargetSSHFPString(contents)
+	case "SVCB", "HTTPS":
+		return rc.SetTargetSVCBString(origin, contents)
 	case "TLSA":
 		return rc.SetTargetTLSAString(contents)
 	default:
@@ -162,7 +168,11 @@ func (rc *RecordConfig) PopulateFromString(rtype, contents, origin string) error
 		return rc.SetTargetCAAString(contents)
 	case "DS":
 		return rc.SetTargetDSString(contents)
+	case "DNSKEY":
+		return rc.SetTargetDNSKEYString(contents)
 	case "DHCID":
+		return rc.SetTarget(contents)
+	case "DNAME":
 		return rc.SetTarget(contents)
 	case "LOC":
 		return rc.SetTargetLOCString(origin, contents)
@@ -178,6 +188,8 @@ func (rc *RecordConfig) PopulateFromString(rtype, contents, origin string) error
 		return rc.SetTargetSRVString(contents)
 	case "SSHFP":
 		return rc.SetTargetSSHFPString(contents)
+	case "SVCB", "HTTPS":
+		return rc.SetTargetSVCBString(origin, contents)
 	case "TLSA":
 		return rc.SetTargetTLSAString(contents)
 	default:

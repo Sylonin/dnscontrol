@@ -16,6 +16,7 @@ type CLI interface {
 	StartDomain(domain string)
 	StartDNSProvider(name string, skip bool)
 	EndProvider(name string, numCorrections int, err error)
+	EndProvider2(name string, numCorrections int)
 	StartRegistrar(name string, skip bool)
 
 	PrintCorrection(n int, c *models.Correction)
@@ -31,6 +32,7 @@ type Printer interface {
 	Println(lines ...string)
 	Warnf(fmt string, args ...interface{})
 	Errorf(fmt string, args ...interface{})
+	PrintfIf(print bool, fmt string, args ...interface{})
 }
 
 // Debugf is called to print/format debug information.
@@ -57,6 +59,11 @@ func Warnf(fmt string, args ...interface{}) {
 // func Errorf(fmt string, args ...interface{}) {
 // 	DefaultPrinter.Errorf(fmt, args...)
 // }
+
+// PrintfIf is called to optionally print something.
+func PrintfIf(print bool, fmt string, args ...interface{}) {
+	DefaultPrinter.PrintfIf(print, fmt, args...)
+}
 
 var (
 	// DefaultPrinter is the default Printer, used by Debugf, Printf, and Warnf.
@@ -164,6 +171,18 @@ func (c ConsolePrinter) EndProvider(name string, numCorrections int, err error) 
 	}
 }
 
+// EndProvider2 is called at the end of each provider.
+func (c ConsolePrinter) EndProvider2(name string, numCorrections int) {
+	plural := "s"
+	if numCorrections == 1 {
+		plural = ""
+	}
+	if (SkinnyReport) && (numCorrections == 0) {
+		return
+	}
+	fmt.Fprintf(c.Writer, "%d correction%s (%s)\n", numCorrections, plural, name)
+}
+
 // Debugf is called to print/format debug information.
 func (c ConsolePrinter) Debugf(format string, args ...interface{}) {
 	if c.Verbose {
@@ -189,4 +208,11 @@ func (c ConsolePrinter) Warnf(format string, args ...interface{}) {
 // Errorf is called to print/format an error.
 func (c ConsolePrinter) Errorf(format string, args ...interface{}) {
 	fmt.Fprintf(c.Writer, "ERROR: "+format, args...)
+}
+
+// PrintfIf is called to optionally print/format a message.
+func (c ConsolePrinter) PrintfIf(print bool, format string, args ...interface{}) {
+	if print {
+		fmt.Fprintf(c.Writer, format, args...)
+	}
 }
