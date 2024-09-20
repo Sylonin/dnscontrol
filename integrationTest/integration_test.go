@@ -16,6 +16,7 @@ import (
 	"github.com/StackExchange/dnscontrol/v4/providers"
 	_ "github.com/StackExchange/dnscontrol/v4/providers/_all"
 	"github.com/StackExchange/dnscontrol/v4/providers/cloudflare"
+	"github.com/StackExchange/dnscontrol/v4/providers/cloudflare/rtypes/cfsingleredirect"
 	"github.com/miekg/dns/dnsutil"
 )
 
@@ -60,7 +61,7 @@ func getProvider(t *testing.T) (providers.DNSServiceProvider, string, map[string
 		}
 
 		var metadata json.RawMessage
-		// CLOUDFLAREAPI tests related to CF_REDIRECT/CF_TEMP_REDIRECT
+		// CLOUDFLAREAPI tests related to CLOUDFLAREAPI_SINGLE_REDIRECT/CF_REDIRECT/CF_TEMP_REDIRECT
 		// requires metadata to enable this feature.
 		// In hindsight, I have no idea why this metadata flag is required to
 		// use this feature. Maybe because we didn't have the capabilities
@@ -227,13 +228,13 @@ func makeChanges(t *testing.T, prv providers.DNSServiceProvider, dc *models.Doma
 		}
 
 		// get and run corrections for first time
-		_, corrections, err := zonerecs.CorrectZoneRecords(prv, dom)
+		_, corrections, actualChangeCount, err := zonerecs.CorrectZoneRecords(prv, dom)
 		if err != nil {
 			t.Fatal(fmt.Errorf("runTests: %w", err))
 		}
 		if tst.Changeless {
-			if count := len(corrections); count != 0 {
-				t.Logf("Expected 0 corrections on FIRST run, but found %d.", count)
+			if actualChangeCount != 0 {
+				t.Logf("Expected 0 corrections on FIRST run, but found %d.", actualChangeCount)
 				for i, c := range corrections {
 					t.Logf("UNEXPECTED #%d: %s", i, c.Msg)
 				}
@@ -260,12 +261,12 @@ func makeChanges(t *testing.T, prv providers.DNSServiceProvider, dc *models.Doma
 		}
 
 		// run a second time and expect zero corrections
-		_, corrections, err = zonerecs.CorrectZoneRecords(prv, dom2)
+		_, corrections, actualChangeCount, err = zonerecs.CorrectZoneRecords(prv, dom2)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if count := len(corrections); count != 0 {
-			t.Logf("Expected 0 corrections on second run, but found %d.", count)
+		if actualChangeCount != 0 {
+			t.Logf("Expected 0 corrections on second run, but found %d.", actualChangeCount)
 			for i, c := range corrections {
 				t.Logf("UNEXPECTED #%d: %s", i, c.Msg)
 			}
@@ -352,7 +353,7 @@ func TestDualProviders(t *testing.T) {
 	run := func() {
 		dom, _ := dc.Copy()
 
-		rs, cs, err := zonerecs.CorrectZoneRecords(p, dom)
+		rs, cs, _, err := zonerecs.CorrectZoneRecords(p, dom)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -377,12 +378,12 @@ func TestDualProviders(t *testing.T) {
 	run()
 	// run again to make sure no corrections
 	t.Log("Running again to ensure stability")
-	rs, cs, err := zonerecs.CorrectZoneRecords(p, dc)
+	rs, cs, actualChangeCount, err := zonerecs.CorrectZoneRecords(p, dc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count := len(cs); count != 0 {
-		t.Logf("Expect no corrections on second run, but found %d.", count)
+	if actualChangeCount != 0 {
+		t.Logf("Expect no corrections on second run, but found %d.", actualChangeCount)
 		for i, c := range rs {
 			t.Logf("INFO#%d:\n%s", i+1, c.Msg)
 		}
@@ -494,6 +495,19 @@ func cfProxyCNAME(name, target, status string) *models.RecordConfig {
 	r := cname(name, target)
 	r.Metadata = make(map[string]string)
 	r.Metadata["cloudflare_proxy"] = status
+	return r
+}
+
+func cfSingleRedirectEnabled() bool {
+	return ((*enableCFRedirectMode) != "")
+}
+
+func cfSingleRedirect(name string, code any, when, then string) *models.RecordConfig {
+	r := makeRec("@", name, cfsingleredirect.SINGLEREDIRECT)
+	err := cfsingleredirect.FromRaw(r, []any{name, code, when, then})
+	if err != nil {
+		panic("Should not happen... cfSingleRedirect")
+	}
 	return r
 }
 
@@ -706,6 +720,9 @@ func tc(desc string, recs ...*models.RecordConfig) *TestCase {
 	var records []*models.RecordConfig
 	var unmanagedItems []*models.UnmanagedConfig
 	for _, r := range recs {
+		if r == nil {
+			continue
+		}
 		switch r.Type {
 		case "IGNORE":
 			unmanagedItems = append(unmanagedItems, &models.UnmanagedConfig{
@@ -745,6 +762,15 @@ func tlsa(name string, usage, selector, matchingtype uint8, target string) *mode
 
 func ns1Urlfwd(name, target string) *models.RecordConfig {
 	return makeRec(name, target, "NS1_URLFWD")
+}
+
+func porkbunUrlfwd(name, target, t, includePath, wildcard string) *models.RecordConfig {
+	r := makeRec(name, target, "PORKBUN_URLFWD")
+	r.Metadata = make(map[string]string)
+	r.Metadata["type"] = t
+	r.Metadata["includePath"] = includePath
+	r.Metadata["wildcard"] = wildcard
+	return r
 }
 
 func clear() *TestCase {
@@ -806,7 +832,7 @@ func makeTests() []*TestGroup {
 	// Only run this test if all these bool flags are true:
 	//     alltrue(*enableCFWorkers, *anotherFlag, myBoolValue)
 	// NOTE: You can't mix not() and only()
-	//     reset(not("ROUTE53"), only("GCLOUD")),  // ERROR!
+	//     not("ROUTE53"), only("GCLOUD"),  // ERROR!
 	// NOTE: All requires()/not()/only() must appear before any tc().
 
 	// tc()
@@ -1917,9 +1943,20 @@ func makeTests() []*TestGroup {
 
 		testgroup("CF_REDIRECT_CONVERT",
 			only("CLOUDFLAREAPI"),
+			alltrue(cfSingleRedirectEnabled()),
 			tc("start301", cfRedir("cnn.**current-domain-no-trailing**/*", "https://www.cnn.com/$1")),
 			tc("convert302", cfRedirTemp("cnn.**current-domain-no-trailing**/*", "https://www.cnn.com/$1")),
 			tc("convert301", cfRedir("cnn.**current-domain-no-trailing**/*", "https://www.cnn.com/$1")),
+		),
+
+		testgroup("CLOUDFLAREAPI_SINGLE_REDIRECT",
+			only("CLOUDFLAREAPI"),
+			alltrue(cfSingleRedirectEnabled()),
+			tc("start301", cfSingleRedirect(`name1`, `301`, `http.host eq "cnn.slackoverflow.com"`, `concat("https://www.cnn.com", http.request.uri.path)`)),
+			tc("changecode", cfSingleRedirect(`name1`, `302`, `http.host eq "cnn.slackoverflow.com"`, `concat("https://www.cnn.com", http.request.uri.path)`)),
+			tc("changewhen", cfSingleRedirect(`name1`, `302`, `http.host eq "msnbc.slackoverflow.com"`, `concat("https://www.cnn.com", http.request.uri.path)`)),
+			tc("changethen", cfSingleRedirect(`name1`, `302`, `http.host eq "msnbc.slackoverflow.com"`, `concat("https://www.msnbc.com", http.request.uri.path)`)),
+			tc("changename", cfSingleRedirect(`name1bis`, `302`, `http.host eq "msnbc.slackoverflow.com"`, `concat("https://www.msnbc.com", http.request.uri.path)`)),
 		),
 
 		// CLOUDFLAREAPI: PROXY
@@ -2250,6 +2287,15 @@ func makeTests() []*TestGroup {
 				ovhspf("spf", "v=spf1 a mx -all"),
 				ovhdkim("dkim", "v=DKIM1;t=s;p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDk72yk6UML8LGIXFobhvx6UDUntqGzmyie2FLMyrOYk1C7CVYR139VMbO9X1rFvZ8TaPnMCkMbuEGWGgWNc27MLYKfI+wP/SYGjRS98TNl9wXxP8tPfr6id5gks95sEMMaYTu8sctnN6sBOvr4hQ2oipVcBn/oxkrfhqvlcat5gQIDAQAB"),
 				ovhdmarc("_dmarc", "v=DMARC1; p=none; rua=mailto:dmarc@example.com")),
+		),
+
+		// PORKBUN features
+
+		testgroup("PORKBUN_URLFWD tests",
+			only("PORKBUN"),
+			tc("Add a urlfwd", porkbunUrlfwd("urlfwd1", "http://example.com", "", "", "")),
+			tc("Update a urlfwd", porkbunUrlfwd("urlfwd1", "http://example.org", "", "", "")),
+			tc("Update a urlfwd with metadata", porkbunUrlfwd("urlfwd1", "http://example.org", "permanent", "no", "no")),
 		),
 
 		// This MUST be the last test.

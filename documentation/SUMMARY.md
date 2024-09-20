@@ -20,6 +20,7 @@
   * [DOMAIN_ELSEWHERE_AUTO](language-reference/top-level-functions/DOMAIN_ELSEWHERE_AUTO.md)
   * [D_EXTEND](language-reference/top-level-functions/D_EXTEND.md)
   * [FETCH](language-reference/top-level-functions/FETCH.md)
+  * [HASH](language-reference/top-level-functions/HASH.md)
   * [IP](language-reference/top-level-functions/IP.md)
   * [NewDnsProvider](language-reference/top-level-functions/NewDnsProvider.md)
   * [NewRegistrar](language-reference/top-level-functions/NewRegistrar.md)
@@ -85,6 +86,7 @@
             * [AZURE_ALIAS](language-reference/domain-modifiers/AZURE_ALIAS.md)
         * Cloudflare DNS
             * [CF_REDIRECT](language-reference/domain-modifiers/CF_REDIRECT.md)
+            * [CF_SINGLE_REDIRECT](language-reference/domain-modifiers/CF_SINGLE_REDIRECT.md)
             * [CF_TEMP_REDIRECT](language-reference/domain-modifiers/CF_TEMP_REDIRECT.md)
             * [CF_WORKER_ROUTE](language-reference/domain-modifiers/CF_WORKER_ROUTE.md)
         * ClouDNS
@@ -149,6 +151,7 @@
 * [PowerDNS](provider/powerdns.md)
 * [Realtime Register](provider/realtimeregister.md)
 * [RWTH DNS-Admin](provider/rwth.md)
+* [Sakura Cloud](provider/sakuracloud.md)
 * [SoftLayer DNS](provider/softlayer.md)
 * [TransIP](provider/transip.md)
 * [Vultr](provider/vultr.md)

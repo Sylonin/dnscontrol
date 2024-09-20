@@ -71,12 +71,15 @@ type inwxAPI struct {
 
 // init registers the registrar and the domain service provider with dnscontrol.
 func init() {
-	providers.RegisterRegistrarType("INWX", newInwxReg)
+	const providerName = "INWX"
+	const providerMaintainer = "@patschi"
+	providers.RegisterRegistrarType(providerName, newInwxReg)
 	fns := providers.DspFuncs{
 		Initializer:   newInwxDsp,
 		RecordAuditor: AuditRecords,
 	}
-	providers.RegisterDomainServiceProviderType("INWX", fns, features)
+	providers.RegisterDomainServiceProviderType(providerName, fns, features)
+	providers.RegisterMaintainer(providerName, providerMaintainer)
 }
 
 // getOTP either returns the TOTPValue or uses TOTPKey and the current time to generate a valid TOTPValue.
@@ -233,15 +236,15 @@ func checkRecords(records models.Records) error {
 }
 
 // GetZoneRecordsCorrections returns a list of corrections that will turn existing records into dc.Records.
-func (api *inwxAPI) GetZoneRecordsCorrections(dc *models.DomainConfig, foundRecords models.Records) ([]*models.Correction, error) {
+func (api *inwxAPI) GetZoneRecordsCorrections(dc *models.DomainConfig, foundRecords models.Records) ([]*models.Correction, int, error) {
 	err := checkRecords(dc.Records)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	toReport, create, del, mod, err := diff.NewCompat(dc).IncrementalDiff(foundRecords)
+	toReport, create, del, mod, actualChangeCount, err := diff.NewCompat(dc).IncrementalDiff(foundRecords)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	// Start corrections with the reports
 	corrections := diff.GenerateMessageCorrections(toReport)
@@ -269,7 +272,7 @@ func (api *inwxAPI) GetZoneRecordsCorrections(dc *models.DomainConfig, foundReco
 		})
 	}
 
-	return corrections, nil
+	return corrections, actualChangeCount, nil
 }
 
 // getDefaultNameservers returns string map with default nameservers based on e.g. sandbox mode.

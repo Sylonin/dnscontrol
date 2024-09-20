@@ -82,11 +82,14 @@ var features = providers.DocumentationNotes{
 }
 
 func init() {
+	const providerName = "DIGITALOCEAN"
+	const providerMaintainer = "@Deraen"
 	fns := providers.DspFuncs{
 		Initializer:   NewDo,
 		RecordAuditor: AuditRecords,
 	}
-	providers.RegisterDomainServiceProviderType("DIGITALOCEAN", fns, features)
+	providers.RegisterDomainServiceProviderType(providerName, fns, features)
+	providers.RegisterMaintainer(providerName, providerMaintainer)
 }
 
 // EnsureZoneExists creates a zone if it does not exist
@@ -169,12 +172,12 @@ func (api *digitaloceanProvider) GetZoneRecords(domain string, meta map[string]s
 }
 
 // GetZoneRecordsCorrections returns a list of corrections that will turn existing records into dc.Records.
-func (api *digitaloceanProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, existingRecords models.Records) ([]*models.Correction, error) {
+func (api *digitaloceanProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, existingRecords models.Records) ([]*models.Correction, int, error) {
 	ctx := context.Background()
 
-	toReport, toCreate, toDelete, toModify, err := diff.NewCompat(dc).IncrementalDiff(existingRecords)
+	toReport, toCreate, toDelete, toModify, actualChangeCount, err := diff.NewCompat(dc).IncrementalDiff(existingRecords)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	// Start corrections with the reports
 	corrections := diff.GenerateMessageCorrections(toReport)
@@ -233,7 +236,7 @@ func (api *digitaloceanProvider) GetZoneRecordsCorrections(dc *models.DomainConf
 		corrections = append(corrections, corr)
 	}
 
-	return corrections, nil
+	return corrections, actualChangeCount, nil
 }
 
 func getRecords(api *digitaloceanProvider, name string) ([]godo.DomainRecord, error) {

@@ -93,11 +93,14 @@ func initBind(config map[string]string, providermeta json.RawMessage) (providers
 }
 
 func init() {
+	const providerName = "BIND"
+	const providerMaintainer = "@tlimoncelli"
 	fns := providers.DspFuncs{
 		Initializer:   initBind,
 		RecordAuditor: AuditRecords,
 	}
-	providers.RegisterDomainServiceProviderType("BIND", fns, features)
+	providers.RegisterDomainServiceProviderType(providerName, fns, features)
+	providers.RegisterMaintainer(providerName, providerMaintainer)
 }
 
 // SoaDefaults contains the parts of the default SOA settings.
@@ -214,7 +217,7 @@ func ParseZoneContents(content string, zoneName string, zonefileName string) (mo
 }
 
 // GetZoneRecordsCorrections returns a list of corrections that will turn existing records into dc.Records.
-func (c *bindProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, foundRecords models.Records) ([]*models.Correction, error) {
+func (c *bindProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, foundRecords models.Records) ([]*models.Correction, int, error) {
 	var corrections []*models.Correction
 
 	changes := false
@@ -245,12 +248,13 @@ func (c *bindProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, foundR
 
 	var msgs []string
 	var err error
-	msgs, changes, err = diff2.ByZone(foundRecords, dc, nil)
+	var actualChangeCount int
+	msgs, changes, actualChangeCount, err = diff2.ByZone(foundRecords, dc, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if !changes {
-		return nil, nil
+		return nil, 0, nil
 	}
 	msg = strings.Join(msgs, "\n")
 
@@ -308,7 +312,7 @@ func (c *bindProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, foundR
 			},
 		})
 
-	return corrections, nil
+	return corrections, actualChangeCount, nil
 }
 
 // preprocessFilename pre-processes a filename we're about to os.Create()

@@ -50,12 +50,15 @@ var features = providers.DocumentationNotes{
 
 // init registers the domain service provider with dnscontrol.
 func init() {
+	const providerName = "REALTIMEREGISTER"
+	const providerMaintainer = "@PJEilers"
 	fns := providers.DspFuncs{
 		Initializer:   newRtrDsp,
 		RecordAuditor: AuditRecords,
 	}
-	providers.RegisterDomainServiceProviderType("REALTIMEREGISTER", fns, features)
-	providers.RegisterRegistrarType("REALTIMEREGISTER", newRtrReg)
+	providers.RegisterDomainServiceProviderType(providerName, fns, features)
+	providers.RegisterRegistrarType(providerName, newRtrReg)
+	providers.RegisterMaintainer(providerName, providerMaintainer)
 }
 
 func newRtr(config map[string]string, _ json.RawMessage) (*realtimeregisterAPI, error) {
@@ -103,16 +106,16 @@ func (api *realtimeregisterAPI) GetZoneRecords(domain string, meta map[string]st
 	return recordConfigs, nil
 }
 
-func (api *realtimeregisterAPI) GetZoneRecordsCorrections(dc *models.DomainConfig, existing models.Records) ([]*models.Correction, error) {
-	msgs, changes, err := diff2.ByZone(existing, dc, nil)
+func (api *realtimeregisterAPI) GetZoneRecordsCorrections(dc *models.DomainConfig, existing models.Records) ([]*models.Correction, int, error) {
+	msgs, changes, actualChangeCount, err := diff2.ByZone(existing, dc, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	var corrections []*models.Correction
 
 	if !changes {
-		return corrections, nil
+		return corrections, 0, nil
 	}
 
 	dnssec := api.Zones[dc.Name].Dnssec
@@ -126,6 +129,7 @@ func (api *realtimeregisterAPI) GetZoneRecordsCorrections(dc *models.DomainConfi
 					return nil
 				},
 			})
+		actualChangeCount++
 	}
 
 	if !api.Zones[dc.Name].Dnssec && dc.AutoDNSSEC == "on" {
@@ -137,6 +141,7 @@ func (api *realtimeregisterAPI) GetZoneRecordsCorrections(dc *models.DomainConfi
 					return nil
 				},
 			})
+		actualChangeCount++
 	}
 
 	if changes {
@@ -159,7 +164,7 @@ func (api *realtimeregisterAPI) GetZoneRecordsCorrections(dc *models.DomainConfi
 			})
 	}
 
-	return corrections, nil
+	return corrections, actualChangeCount, nil
 }
 
 func (api *realtimeregisterAPI) ListZones() ([]string, error) {

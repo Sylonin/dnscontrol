@@ -91,13 +91,16 @@ var features = providers.DocumentationNotes{
 }
 
 func init() {
+	const providerName = "ROUTE53"
+	const providerMaintainer = "@tresni"
 	fns := providers.DspFuncs{
 		Initializer:   newRoute53Dsp,
 		RecordAuditor: AuditRecords,
 	}
-	providers.RegisterDomainServiceProviderType("ROUTE53", fns, features)
-	providers.RegisterRegistrarType("ROUTE53", newRoute53Reg)
-	providers.RegisterCustomRecordType("R53_ALIAS", "ROUTE53", "")
+	providers.RegisterDomainServiceProviderType(providerName, fns, features)
+	providers.RegisterRegistrarType(providerName, newRoute53Reg)
+	providers.RegisterCustomRecordType("R53_ALIAS", providerName, "")
+	providers.RegisterMaintainer(providerName, providerMaintainer)
 }
 
 func withRetry(f func() error) {
@@ -279,10 +282,10 @@ func (r *route53Provider) getZoneRecords(zone r53Types.HostedZone) (models.Recor
 }
 
 // GetZoneRecordsCorrections returns a list of corrections that will turn existing records into dc.Records.
-func (r *route53Provider) GetZoneRecordsCorrections(dc *models.DomainConfig, existingRecords models.Records) ([]*models.Correction, error) {
+func (r *route53Provider) GetZoneRecordsCorrections(dc *models.DomainConfig, existingRecords models.Records) ([]*models.Correction, int, error) {
 	zone, err := r.getZone(dc)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	// update zone_id to current zone.id if not specified by the user
@@ -298,9 +301,9 @@ func (r *route53Provider) GetZoneRecordsCorrections(dc *models.DomainConfig, exi
 
 	// Amazon Route53 is a "ByRecordSet" API.
 	// At each label:rtype pair, we either delete all records or UPSERT the desired records.
-	instructions, err := diff2.ByRecordSet(existingRecords, dc, nil)
+	instructions, actualChangeCount, err := diff2.ByRecordSet(existingRecords, dc, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	instructions = reorderInstructions(instructions)
 	var reports []*models.Correction
@@ -400,10 +403,10 @@ func (r *route53Provider) GetZoneRecordsCorrections(dc *models.DomainConfig, exi
 		addCorrection(descBatchStr, req)
 	}
 	if err := batcher.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	return append(reports, corrections...), nil
+	return append(reports, corrections...), actualChangeCount, nil
 
 }
 

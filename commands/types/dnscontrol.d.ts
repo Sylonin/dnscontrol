@@ -472,12 +472,17 @@ declare function CAA(name: string, tag: "issue" | "issuewild" | "iodef", value: 
 declare function CAA_BUILDER(opts: { label?: string; iodef: string; iodef_critical?: boolean; issue: string[]; issue_critical?: boolean; issuewild: string[]; issuewild_critical?: boolean; ttl?: Duration }): DomainModifier;
 
 /**
+ * WARNING: Cloudflare is removing this feature and replacing it with a new
+ * feature called "Dynamic Single Redirect". DNSControl will automatically
+ * generate "Dynamic Single Redirects" for a limited number of use cases. See
+ * [`CLOUDFLAREAPI`](../provider/cloudflareapi.md) for details.
+ *
  * `CF_REDIRECT` uses Cloudflare-specific features ("Forwarding URL" Page Rules) to
  * generate a HTTP 301 permanent redirect.
  *
  * If _any_ `CF_REDIRECT` or [`CF_TEMP_REDIRECT`](CF_TEMP_REDIRECT.md) functions are used then
  * `dnscontrol` will manage _all_ "Forwarding URL" type Page Rules for the domain.
- * Page Rule types other than "Forwarding URL” will be left alone.
+ * Page Rule types other than "Forwarding URL" will be left alone.
  *
  * WARNING: Cloudflare does not currently fully document the Page Rules API and
  * this interface is not extensively tested. Take precautions such as making
@@ -503,6 +508,41 @@ declare function CAA_BUILDER(opts: { label?: string; iodef: string; iodef_critic
 declare function CF_REDIRECT(source: string, destination: string, ...modifiers: RecordModifier[]): DomainModifier;
 
 /**
+ * `CF_SINGLE_REDIRECT` is a Cloudflare-specific feature for creating HTTP 301
+ * (permanent) or 302 (temporary) redirects.
+ *
+ * This feature manages dynamic "Single Redirects". (Single Redirects can be
+ * static or dynamic but DNSControl only maintains dynamic redirects).
+ *
+ * Cloudflare documentation: <https://developers.cloudflare.com/rules/url-forwarding/single-redirects/>
+ *
+ * ```javascript
+ * D("example.com", REG_MY_PROVIDER, DnsProvider(DSP_MY_PROVIDER),
+ *   CF_SINGLE_REDIRECT("name", 301, "when", "then"),
+ *   CF_SINGLE_REDIRECT('redirect www.example.com', 301, 'http.host eq "www.example.com"', 'concat("https://otherplace.com", http.request.uri.path)'),
+ *   CF_SINGLE_REDIRECT('redirect yyy.example.com', 301, 'http.host eq "yyy.example.com"', 'concat("https://survey.stackoverflow.co", "")'),
+ * END);
+ * ```
+ *
+ * The fields are:
+ *
+ * * name: The name (basically a comment, but it must be unique)
+ * * code: Either 301 (permanent) or 302 (temporary) redirects. May be a number or string.
+ * * when: What Cloudflare sometimes calls the "rule expression".
+ * * then: The replacement expression.
+ *
+ * NOTE: The features [`CF_REDIRECT`](CF_REDIRECT.md) and [`CF_TEMP_REDIRECT`](CF_TEMP_REDIRECT.md) generate `CF_SINGLE_REDIRECT` if enabled in [`CLOUDFLAREAPI`](../../provider/cloudflareapi.md).
+ *
+ * @see https://docs.dnscontrol.org/language-reference/domain-modifiers/service-provider-specific/cloudflare-dns/cf_single_redirect
+ */
+declare function CF_SINGLE_REDIRECT(name: string, code: number, when: string, then: string, ...modifiers: RecordModifier[]): DomainModifier;
+
+/**
+ * WARNING: Cloudflare is removing this feature and replacing it with a new
+ * feature called "Dynamic Single Redirect". DNSControl will automatically
+ * generate "Dynamic Single Redirects" for a limited number of use cases. See
+ * [`CLOUDFLAREAPI`](../provider/cloudflareapi.md) for details.
+ *
  * `CF_TEMP_REDIRECT` uses Cloudflare-specific features ("Forwarding URL" Page
  * Rules) to generate a HTTP 302 temporary redirect.
  *
@@ -982,7 +1022,8 @@ declare function DS(name: string, keytag: number, algorithm: number, digesttype:
  * not `domain.tld`.
  *
  * Some operators only act on an apex domain (e.g.
- * [`CF_REDIRECT`](../domain-modifiers/CF_REDIRECT.md) and [`CF_TEMP_REDIRECT`](../domain-modifiers/CF_TEMP_REDIRECT.md)). Using them
+ * [`CF_SINGLE_REDIRECT`](../domain-modifiers/CF_SINGLE_REDIRECT.md),
+ * [`CF_REDIRECT`](../domain-modifiers/CF_REDIRECT.md), and [`CF_TEMP_REDIRECT`](../domain-modifiers/CF_TEMP_REDIRECT.md)). Using them
  * in a `D_EXTEND` subdomain may not be what you expect.
  *
  * ```javascript
@@ -1094,6 +1135,35 @@ declare function DnsProvider(name: string, nsCount?: number): DomainModifier;
  * @see https://docs.dnscontrol.org/language-reference/domain-modifiers/frame
  */
 declare function FRAME(name: string, target: string, ...modifiers: RecordModifier[]): DomainModifier;
+
+/**
+ * `HASH` hashes `value` using the hashing algorithm given in `algorithm`
+ * (accepted values `SHA1`, `SHA256`, and `SHA512`) and returns the hex encoded
+ * hash value.
+ *
+ * example `HASH("SHA1", "abc")` returns `a9993e364706816aba3e25717850c26c9cd0d89d`.
+ *
+ * `HASH()`'s primary use case is for managing [catalog zones](https://datatracker.ietf.org/doc/html/rfc9432):
+ *
+ * > a method for automatic DNS zone provisioning among DNS primary and secondary name
+ * > servers by storing and transferring the catalog of zones to be provisioned as one
+ * > or more regular DNS zones.
+ *
+ * Here's an example of a catalog zone:
+ *
+ * ```javascript
+ * foo_name_suffix = HASH("SHA1", "foo.name") + ".zones"
+ * D("catalog.example"
+ *     [...]
+ *     , TXT("version", "2")
+ *     , PTR(foo_name_suffix, "foo.name.")
+ *     , A("primaries.ext." + foo_name_suffix, "192.168.1.1")
+ * )
+ * ```
+ *
+ * @see https://docs.dnscontrol.org/language-reference/top-level-functions/hash
+ */
+declare function HASH(algorithm: "SHA1" | "SHA256" | "SHA512", value: string): string;
 
 /**
  * HTTPS adds an HTTPS record to a domain. The name should be the relative label for the record. Use `@` for the domain apex. The HTTPS record is a special form of the SVCB resource record.
@@ -1779,7 +1849,7 @@ declare function LOC_BUILDER_STR(opts: { label?: string; str: string; alt?: numb
  *
  * ```javascript
  * D("example.com", REG_MY_PROVIDER, DnsProvider(DSP_MY_PROVIDER),
- *   M365_BUILDER({
+ *   M365_BUILDER("example.com", {
  *       initialDomain: "example.onmicrosoft.com",
  *   }),
  * END);
@@ -1791,7 +1861,7 @@ declare function LOC_BUILDER_STR(opts: { label?: string; str: string; alt?: numb
  *
  * ```javascript
  * D("example.com", REG_MY_PROVIDER, DnsProvider(DSP_MY_PROVIDER),
- *   M365_BUILDER({
+ *   M365_BUILDER("example.com", {
  *       label: "test",
  *       mx: false,
  *       autodiscover: false,
@@ -1839,20 +1909,21 @@ declare function M365_BUILDER(opts: { label?: string; mx?: boolean; autodiscover
 declare function MX(name: string, priority: number, target: string, ...modifiers: RecordModifier[]): DomainModifier;
 
 /**
- * `NAMESERVER()` instructs DNSControl to inform the domain"s registrar where to find this zone.
+ * `NAMESERVER()` instructs DNSControl to inform the domain's registrar where to find this zone.
  * For some registrars this will also add NS records to the zone itself.
  *
  * This takes exactly one argument: the name of the nameserver. It must end with
  * a "." if it is a FQDN, just like all targets.
  *
  * This is different than the [`NS()`](NS.md) function, which inserts NS records
- * in the current zone and accepts a label. [`NS()`](NS.md) is useful for downward
+ * in the current zone and accepts a label. [`NS()`](NS.md) is for downward
  * delegations. `NAMESERVER()` is for informing upstream delegations.
  *
  * For more information, refer to [this page](../../nameservers.md).
  *
  * ```javascript
- * D("example.com", REG_MY_PROVIDER, DnsProvider(DSP_MY_PROVIDER),
+ * D("example.com", REG_MY_PROVIDER,
+ *   DnsProvider(DSP_MY_PROVIDER),
  *   DnsProvider(route53, 0),
  *   // Replace the nameservers:
  *   NAMESERVER("ns1.myserver.com."),
@@ -1871,7 +1942,7 @@ declare function MX(name: string, priority: number, target: string, ...modifiers
  * Nameservers are one of the least
  * understood parts of DNS, so a little extra explanation is required.
  *
- * * [`NS()`](NS.md) lets you add an NS record to a zone, just like [`A()`](A.md) adds an A
+ * * [`NS()`](NS.md) adds an NS record to a zone, just like [`A()`](A.md) adds an A
  *   record to the zone. This is generally used to delegate a subzone.
  *
  * * The `NAMESERVER()` directive speaks to the Registrar about how the parent should delegate the zone.
@@ -2218,7 +2289,26 @@ declare const NO_PURGE: DomainModifier;
 declare function NS(name: string, target: string, ...modifiers: RecordModifier[]): DomainModifier;
 
 /**
- * Documentation needed.
+ * `NS1_URLFWD` is an NS1-specific feature that maps to NS1's URLFWD record, which creates HTTP 301 (permanent) or 302 (temporary) redirects.
+ *
+ * ```javascript
+ * D("example.com", REG_MY_PROVIDER, DnsProvider(DSP_MY_PROVIDER),
+ *   NS1_URLFWD("urlfwd", "/ http://example.com 302 2 0")
+ * );
+ * ```
+ *
+ * The fields are:
+ * * name: the record name
+ * * target: a complex field containing the following, space separated:
+ *     * from - the path to match
+ *     * to - the url to redirect to
+ *     * redirectType - (0 - masking, 301, 302)
+ *     * pathForwardingMode - (0 - All, 1 - Capture, 2 - None)
+ *     * queryForwardingMode - (0 - disabled, 1 - enabled)
+ *
+ * WARNING: According to NS1, this type of record is deprecated and in the process
+ * of being replaced by the premium-only `REDIRECT` record type. While still able to be
+ * configured through the API, as suggested by NS1, please try not to use it, going forward.
  *
  * @see https://docs.dnscontrol.org/language-reference/domain-modifiers/service-provider-specific/ns1/ns1_urlfwd
  */
@@ -2312,6 +2402,27 @@ declare function NewRegistrar(name: string, type?: string, meta?: object): strin
  * @see https://docs.dnscontrol.org/language-reference/top-level-functions/panic
  */
 declare function PANIC(message: string): never;
+
+/**
+ * `PORKBUN_URLFWD` is a Porkbun-specific feature that maps to Porkbun's URL forwarding feature, which creates HTTP 301 (permanent) or 302 (temporary) redirects.
+ *
+ * ```javascript
+ * D("example.com", REG_MY_PROVIDER, DnsProvider(DSP_MY_PROVIDER),
+ *     PORKBUN_URLFWD("urlfwd1", "http://example.com"),
+ *     PORKBUN_URLFWD("urlfwd2", "http://example.org", {type: "permanent", includePath: "yes", wildcard: "no"})
+ * );
+ * ```
+ *
+ * The fields are:
+ * * name: the record name
+ * * target: where you'd like to forward the domain to
+ * * type: valid types are: `temporary` (302 / 307) or `permanent` (301), default to `temporary`
+ * * includePath: whether to include the URI path in the redirection. Valid options are `yes` or `no`, default to `no`
+ * * wildcard: forward all subdomains of the domain. Valid options are `yes` or `no`, default to `yes`
+ *
+ * @see https://docs.dnscontrol.org/language-reference/domain-modifiers/service-provider-specific//porkbun_urlfwd
+ */
+declare function PORKBUN_URLFWD(name: string, target: string, ...modifiers: RecordModifier[]): DomainModifier;
 
 /**
  * PTR adds a PTR record to the domain.

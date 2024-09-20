@@ -47,11 +47,14 @@ var features = providers.DocumentationNotes{
 }
 
 func init() {
+	const providerName = "MYTHICBEASTS"
+	const providerMaintainer = "@tomfitzhenry"
 	fns := providers.DspFuncs{
 		Initializer:   newDsp,
 		RecordAuditor: AuditRecords,
 	}
-	providers.RegisterDomainServiceProviderType("MYTHICBEASTS", fns, features)
+	providers.RegisterDomainServiceProviderType(providerName, fns, features)
+	providers.RegisterMaintainer(providerName, providerMaintainer)
 }
 
 func newDsp(conf map[string]string, metadata json.RawMessage) (providers.DNSServiceProvider, error) {
@@ -111,10 +114,10 @@ func zoneFileToRecords(r io.Reader, origin string) (models.Records, error) {
 }
 
 // GetZoneRecordsCorrections returns a list of corrections that will turn existing records into dc.Records.
-func (n *mythicBeastsProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, actual models.Records) ([]*models.Correction, error) {
-	msgs, changes, err := diff2.ByZone(actual, dc, nil)
+func (n *mythicBeastsProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, actual models.Records) ([]*models.Correction, int, error) {
+	msgs, changes, actualChangeCount, err := diff2.ByZone(actual, dc, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	var corrections []*models.Correction
@@ -148,7 +151,7 @@ func (n *mythicBeastsProvider) GetZoneRecordsCorrections(dc *models.DomainConfig
 			})
 	}
 
-	return corrections, nil
+	return corrections, actualChangeCount, nil
 }
 
 // GetNameservers returns the nameservers for a domain.

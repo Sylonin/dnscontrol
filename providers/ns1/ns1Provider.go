@@ -9,6 +9,7 @@ import (
 
 	"github.com/StackExchange/dnscontrol/v4/models"
 	"github.com/StackExchange/dnscontrol/v4/pkg/diff2"
+	"github.com/StackExchange/dnscontrol/v4/pkg/printer"
 	"github.com/StackExchange/dnscontrol/v4/providers"
 	"gopkg.in/ns1/ns1-go.v2/rest"
 	"gopkg.in/ns1/ns1-go.v2/rest/model/dns"
@@ -42,12 +43,15 @@ var docNotes = providers.DocumentationNotes{
 const clientRetries = 10
 
 func init() {
+	const providerName = "NS1"
+	const providerMaintainer = "@costasd"
 	fns := providers.DspFuncs{
 		Initializer:   newProvider,
 		RecordAuditor: AuditRecords,
 	}
-	providers.RegisterDomainServiceProviderType("NS1", fns, providers.CanUseSRV, docNotes)
-	providers.RegisterCustomRecordType("NS1_URLFWD", "NS1", "")
+	providers.RegisterDomainServiceProviderType(providerName, fns, providers.CanUseSRV, docNotes)
+	providers.RegisterCustomRecordType("NS1_URLFWD", providerName, "")
+	providers.RegisterMaintainer(providerName, providerMaintainer)
 }
 
 type nsone struct {
@@ -194,7 +198,7 @@ func (n *nsone) getDomainCorrectionsDNSSEC(domain, toggleDNSSEC string) *models.
 }
 
 // GetZoneRecordsCorrections returns a list of corrections that will turn existing records into dc.Records.
-func (n *nsone) GetZoneRecordsCorrections(dc *models.DomainConfig, existingRecords models.Records) ([]*models.Correction, error) {
+func (n *nsone) GetZoneRecordsCorrections(dc *models.DomainConfig, existingRecords models.Records) ([]*models.Correction, int, error) {
 	var corrections []*models.Correction
 	domain := dc.Name
 
@@ -203,9 +207,9 @@ func (n *nsone) GetZoneRecordsCorrections(dc *models.DomainConfig, existingRecor
 		corrections = append(corrections, dnssecCorrections)
 	}
 
-	changes, err := diff2.ByRecordSet(existingRecords, dc, nil)
+	changes, actualChangeCount, err := diff2.ByRecordSet(existingRecords, dc, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	for _, change := range changes {
@@ -236,7 +240,7 @@ func (n *nsone) GetZoneRecordsCorrections(dc *models.DomainConfig, existingRecor
 		}
 
 	}
-	return corrections, nil
+	return corrections, actualChangeCount, nil
 }
 
 func (n *nsone) add(recs models.Records, domain string) error {
@@ -335,6 +339,7 @@ func buildRecord(recs models.Records, domain string, id string) *dns.Record {
 				strconv.Itoa(int(r.DsDigestType)),
 				r.DsDigest}})
 		} else if r.Type == "NS1_URLFWD" {
+			printer.Warnf("NS1_URLFWD is deprecated and may stop working anytime now. Please avoid such records going forward.\n")
 			rec.Type = "URLFWD"
 			rec.AddAnswer(&dns.Answer{Rdata: strings.Fields(r.GetTargetField())})
 		} else if r.Type == "SVCB" || r.Type == "HTTPS" {

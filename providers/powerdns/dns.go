@@ -20,7 +20,7 @@ func (dsp *powerdnsProvider) GetNameservers(string) ([]*models.Nameserver, error
 
 // GetZoneRecords gets the records of a zone and returns them in RecordConfig format.
 func (dsp *powerdnsProvider) GetZoneRecords(domain string, meta map[string]string) (models.Records, error) {
-	zone, err := dsp.client.Zones().GetZone(context.Background(), dsp.ServerName, domain)
+	zone, err := dsp.client.Zones().GetZone(context.Background(), dsp.ServerName, canonical(domain))
 	if err != nil {
 		return nil, err
 	}
@@ -45,20 +45,21 @@ func (dsp *powerdnsProvider) GetZoneRecords(domain string, meta map[string]strin
 }
 
 // GetZoneRecordsCorrections returns a list of corrections that will turn existing records into dc.Records.
-func (dsp *powerdnsProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, existing models.Records) ([]*models.Correction, error) {
+func (dsp *powerdnsProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, existing models.Records) ([]*models.Correction, int, error) {
 
-	corrections, err := dsp.getDiff2DomainCorrections(dc, existing)
+	corrections, actualChangeCount, err := dsp.getDiff2DomainCorrections(dc, existing)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	// DNSSec corrections
 	dnssecCorrections, err := dsp.getDNSSECCorrections(dc)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
+	actualChangeCount += len(dnssecCorrections)
 
-	return append(corrections, dnssecCorrections...), nil
+	return append(corrections, dnssecCorrections...), actualChangeCount, nil
 }
 
 // EnsureZoneExists creates a zone if it does not exist

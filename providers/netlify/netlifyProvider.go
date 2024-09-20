@@ -33,13 +33,16 @@ var features = providers.DocumentationNotes{
 }
 
 func init() {
+	const providerName = "NETLIFY"
+	const providerMaintainer = "@SphericalKat"
 	fns := providers.DspFuncs{
 		Initializer:   newNetlify,
 		RecordAuditor: AuditRecords,
 	}
-	providers.RegisterDomainServiceProviderType("NETLIFY", fns, features)
-	providers.RegisterCustomRecordType("NETLIFY", "NETLIFY", "")
-	providers.RegisterCustomRecordType("NETLIFYv6", "NETLIFY", "")
+	providers.RegisterDomainServiceProviderType(providerName, fns, features)
+	providers.RegisterCustomRecordType(providerName, providerName, "")
+	providers.RegisterCustomRecordType("NETLIFYv6", providerName, "")
+	providers.RegisterMaintainer(providerName, providerMaintainer)
 }
 
 type netlifyProvider struct {
@@ -157,17 +160,17 @@ func (n *netlifyProvider) ListZones() ([]string, error) {
 }
 
 // GetZoneRecordsCorrections returns a list of corrections that will turn existing records into dc.Records.
-func (n *netlifyProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, records models.Records) ([]*models.Correction, error) {
-	toReport, create, del, modify, err := diff.NewCompat(dc).IncrementalDiff(records)
+func (n *netlifyProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, records models.Records) ([]*models.Correction, int, error) {
+	toReport, create, del, modify, actualChangeCount, err := diff.NewCompat(dc).IncrementalDiff(records)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	// Start corrections with the reports
 	corrections := diff.GenerateMessageCorrections(toReport)
 
 	zone, err := n.getZone(dc.Name)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	// Deletes first so changing type works etc.
@@ -211,7 +214,7 @@ func (n *netlifyProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, rec
 		corrections = append(corrections, corr)
 	}
 
-	return corrections, nil
+	return corrections, actualChangeCount, nil
 }
 
 func toReq(rc *models.RecordConfig) *dnsRecordCreate {

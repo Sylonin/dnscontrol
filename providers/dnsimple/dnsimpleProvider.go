@@ -41,12 +41,15 @@ var features = providers.DocumentationNotes{
 }
 
 func init() {
-	providers.RegisterRegistrarType("DNSIMPLE", newReg)
+	const providerName = "DNSIMPLE"
+	const providerMaintainer = "@onlyhavecans"
+	providers.RegisterRegistrarType(providerName, newReg)
 	fns := providers.DspFuncs{
 		Initializer:   newDsp,
 		RecordAuditor: AuditRecords,
 	}
-	providers.RegisterDomainServiceProviderType("DNSIMPLE", fns, features)
+	providers.RegisterDomainServiceProviderType(providerName, fns, features)
+	providers.RegisterMaintainer(providerName, providerMaintainer)
 }
 
 const stateRegistered = "registered"
@@ -157,17 +160,17 @@ func (c *dnsimpleProvider) GetZoneRecords(domain string, meta map[string]string)
 	return cleanedRecords, nil
 }
 
-func (c *dnsimpleProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, actual models.Records) ([]*models.Correction, error) {
+func (c *dnsimpleProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, actual models.Records) ([]*models.Correction, int, error) {
 	removeOtherApexNS(dc)
 
 	dnssecFixes, err := c.getDNSSECCorrections(dc)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	toReport, create, del, modify, err := diff.NewCompat(dc).IncrementalDiff(actual)
+	toReport, create, del, modify, actualChangeCount, err := diff.NewCompat(dc).IncrementalDiff(actual)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	// Start corrections with the reports
 	corrections := diff.GenerateMessageCorrections(toReport)
@@ -199,7 +202,7 @@ func (c *dnsimpleProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, ac
 		})
 	}
 
-	return corrections, nil
+	return corrections, actualChangeCount, nil
 }
 
 func removeApexNS(records models.Records) models.Records {

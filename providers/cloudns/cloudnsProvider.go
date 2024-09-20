@@ -40,6 +40,7 @@ func NewCloudns(m map[string]string, metadata json.RawMessage) (providers.DNSSer
 var features = providers.DocumentationNotes{
 	// The default for unlisted capabilities is 'Cannot'.
 	// See providers/capabilities.go for the entire list of capabilities.
+	providers.CanAutoDNSSEC:          providers.Can(),
 	providers.CanGetZones:            providers.Can(),
 	providers.CanConcur:              providers.Cannot(),
 	providers.CanUseAlias:            providers.Can(),
@@ -57,12 +58,15 @@ var features = providers.DocumentationNotes{
 }
 
 func init() {
+	const providerName = "CLOUDNS"
+	const providerMaintainer = "@pragmaton"
 	fns := providers.DspFuncs{
 		Initializer:   NewCloudns,
 		RecordAuditor: AuditRecords,
 	}
-	providers.RegisterDomainServiceProviderType("CLOUDNS", fns, features)
-	providers.RegisterCustomRecordType("CLOUDNS_WR", "CLOUDNS", "")
+	providers.RegisterDomainServiceProviderType(providerName, fns, features)
+	providers.RegisterCustomRecordType("CLOUDNS_WR", providerName, "")
+	providers.RegisterMaintainer(providerName, providerMaintainer)
 }
 
 // GetNameservers returns the nameservers for a domain.
@@ -111,16 +115,16 @@ func (c *cloudnsProvider) GetNameservers(domain string) ([]*models.Nameserver, e
 // }
 
 // GetZoneRecordsCorrections returns a list of corrections that will turn existing records into dc.Records.
-func (c *cloudnsProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, existingRecords models.Records) ([]*models.Correction, error) {
+func (c *cloudnsProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, existingRecords models.Records) ([]*models.Correction, int, error) {
 
 	if c.domainIndex == nil {
 		if err := c.fetchDomainList(); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 	domainID, ok := c.domainIndex[dc.Name]
 	if !ok {
-		return nil, fmt.Errorf("'%s' not a zone in ClouDNS account", dc.Name)
+		return nil, 0, fmt.Errorf("'%s' not a zone in ClouDNS account", dc.Name)
 	}
 
 	// Get a list of available TTL values.
@@ -131,12 +135,18 @@ func (c *cloudnsProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, exi
 		record.TTL = fixTTL(record.TTL)
 	}
 
-	toReport, create, del, modify, err := diff.NewCompat(dc).IncrementalDiff(existingRecords)
+	dnssecFixes, err := c.getDNSSECCorrections(dc)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+
+	toReport, create, del, modify, actualChangeCount, err := diff.NewCompat(dc).IncrementalDiff(existingRecords)
+	if err != nil {
+		return nil, 0, err
 	}
 	// Start corrections with the reports
 	corrections := diff.GenerateMessageCorrections(toReport)
+	corrections = append(corrections, dnssecFixes...)
 
 	// Deletes first so changing type works etc.
 	for _, m := range del {
@@ -165,7 +175,7 @@ func (c *cloudnsProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, exi
 	for _, m := range create {
 		req, err := toReq(m.Desired)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 
 		// ClouDNS does not require the trailing period to be specified when creating an NS record where the A or AAAA record exists in the zone.
@@ -200,7 +210,7 @@ func (c *cloudnsProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, exi
 		id := m.Existing.Original.(*domainRecord).ID
 		req, err := toReq(m.Desired)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 
 		// ClouDNS does not require the trailing period to be specified when updating an NS record where the A or AAAA record exists in the zone.
@@ -218,8 +228,36 @@ func (c *cloudnsProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, exi
 		corrections = append(corrections, corr)
 	}
 
-	return corrections, nil
+	return corrections, actualChangeCount, nil
 
+}
+
+// getDNSSECCorrections returns corrections that update a domain's DNSSEC state.
+func (c *cloudnsProvider) getDNSSECCorrections(dc *models.DomainConfig) ([]*models.Correction, error) {
+	enabled, err := c.isDnssecEnabled(dc.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	if enabled && dc.AutoDNSSEC == "off" {
+		return []*models.Correction{
+			{
+				Msg: "Disable DNSSEC",
+				F:   func() error { err := c.setDnssec(dc.Name, false); return err },
+			},
+		}, nil
+	}
+
+	if !enabled && dc.AutoDNSSEC == "on" {
+		return []*models.Correction{
+			{
+				Msg: "Enable DNSSEC",
+				F:   func() error { err := c.setDnssec(dc.Name, true); return err },
+			},
+		}, nil
+	}
+
+	return []*models.Correction{}, nil
 }
 
 // GetZoneRecords gets the records of a zone and returns them in RecordConfig format.

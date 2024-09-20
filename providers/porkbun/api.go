@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/StackExchange/dnscontrol/v4/pkg/printer"
 	"io"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/StackExchange/dnscontrol/v4/pkg/printer"
 )
 
 const (
@@ -35,10 +36,16 @@ type domainRecord struct {
 	Content string `json:"content"`
 	TTL     string `json:"ttl"`
 	Prio    string `json:"prio"`
+	// Forwarding
+	Subdomain   string `json:"subdomain"`
+	Location    string `json:"location"`
+	IncludePath string `json:"includePath"`
+	Wildcard    string `json:"wildcard"`
 }
 
 type recordResponse struct {
-	Records []domainRecord `json:"records"`
+	Records  []domainRecord `json:"records"`
+	Forwards []domainRecord `json:"forwards"`
 }
 
 type domainListRecord struct {
@@ -100,12 +107,6 @@ retry:
 	return bodyString, nil
 }
 
-func (c *porkbunProvider) ping() error {
-	params := requestParams{}
-	_, err := c.post("/ping", params)
-	return err
-}
-
 func (c *porkbunProvider) createRecord(domain string, rec requestParams) error {
 	if _, err := c.post("/dns/create/"+domain, rec); err != nil {
 		return fmt.Errorf("failed create record (porkbun): %w", err)
@@ -146,6 +147,51 @@ func (c *porkbunProvider) getRecords(domain string) ([]domainRecord, error) {
 		if rec.Name == domain && rec.Type == "NS" {
 			continue
 		}
+		records = append(records, rec)
+	}
+	return records, nil
+}
+
+func (c *porkbunProvider) createUrlForwardingRecord(domain string, rec requestParams) error {
+	if _, err := c.post("/domain/addUrlForward/"+domain, rec); err != nil {
+		return fmt.Errorf("failed create url forwarding record (porkbun): %w", err)
+	}
+	return nil
+}
+
+func (c *porkbunProvider) deleteUrlForwardingRecord(domain string, recordID string) error {
+	params := requestParams{}
+	if _, err := c.post(fmt.Sprintf("/domain/deleteUrlForward/%s/%s", domain, recordID), params); err != nil {
+		return fmt.Errorf("failed delete url forwarding record (porkbun): %w", err)
+	}
+	return nil
+}
+
+func (c *porkbunProvider) modifyUrlForwardingRecord(domain string, recordID string, rec requestParams) error {
+	if err := c.deleteUrlForwardingRecord(domain, recordID); err != nil {
+		return err
+	}
+	if err := c.createUrlForwardingRecord(domain, rec); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *porkbunProvider) getUrlForwardingRecords(domain string) ([]domainRecord, error) {
+	params := requestParams{}
+	var bodyString, err = c.post("/domain/getUrlForwarding/"+domain, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed fetching url forwarding record list from porkbun: %w", err)
+	}
+
+	var dr recordResponse
+	err = json.Unmarshal(bodyString, &dr)
+	if err != nil {
+		return nil, fmt.Errorf("failed parsing url forwarding record list from porkbun: %w", err)
+	}
+
+	var records []domainRecord
+	for _, rec := range dr.Forwards {
 		records = append(records, rec)
 	}
 	return records, nil
